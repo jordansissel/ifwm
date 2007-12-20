@@ -140,18 +140,17 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
   XWindowAttributes attr;
   wm_log(wm, LOG_INFO, "%s", __func__);
 
-  if (!XGetWindowAttributes(wm->dpy, mrev.window, &attr)) {
-    wm_log(wm, LOG_ERROR, "%s: XGetWindowAttributes failed", __func__);
-    return;
-  }
-
+  XGrabServer(wm->dpy);
   if (attr.override_redirect) {
     wm_log(wm, LOG_INFO, "%s: skipping window %d, override_redirect is set",
            __func__, mrev.window);
     return;
   }
 
-  XMapWindow(wm->dpy, mrev.window);
+  // Call handlers?
+  wm_add_window(wm, mrev.window);
+  XUngrabServer(wm->dpy);
+
 }
 
 void wm_event_clientmessage(wm_t *wm, XEvent *ev) {
@@ -176,5 +175,45 @@ void wm_event_unmapnotify(wm_t *wm, XEvent *ev) {
   XUnmapEvent uev = ev->xunmap;
   wm_log(wm, LOG_INFO, "%s", __func__);
 
+}
+
+void wm_add_window(wm_t *wm, Window win) {
+  Window frame;
+  Window root;
+  XWindowAttributes new_win_attr;
+  XSetWindowAttributes frame_attr;
+
+  if (!XGetWindowAttributes(wm->dpy, win, &new_win_attr)) {
+    wm_log(wm, LOG_ERROR, "%s: XGetWindowAttributes failed", __func__);
+    return;
+  }
+
+#define BORDER  3
+#define TITLE_HEIGHT 20
+  int x, y, width, height;
+  x = new_win_attr.x - BORDER;
+  y = new_win_attr.y - TITLE_HEIGHT - BORDER;
+  width = new_win_attr.width + (BORDER * 2);
+  height = new_win_attr.width + (BORDER * 2) + TITLE_HEIGHT;
+
+  frame_attr.event_mask = (SubstructureRedirectMask | ButtonPressMask \
+                           | ButtonReleaseMask | EnterWindowMask \
+                           | LeaveWindowMask);
+
+  frame = XCreateWindow(wm->dpy, new_win_attr.root, 
+                        x, y, width, height,
+                        BORDER,
+                        CopyFromParent,
+                        CopyFromParent,
+                        new_win_attr.visual,
+                        (CWEventMask),
+                        frame_attr);
+
+  XReparentWindow(wm->dpy, win, frame, BORDER, TITLE_HEIGHT);
+
+  XMapWindow(wm->dpy, win);
+  XMapWindow(wm->dpy, frame);
+  XRaiseWindow(wm->dpy, frame);
+  XSync(wm->dpy, False);
 }
 
