@@ -246,6 +246,8 @@ void wm_add_window(wm_t *wm, Window win) {
   int x, y, width, height;
   unsigned long valuemask;
   XColor border_color;
+  int status;
+  char *colorstring = "#999933";
 
   x = new_win_attr.x - BORDER;
   y = new_win_attr.y - TITLE_HEIGHT - BORDER;
@@ -255,8 +257,12 @@ void wm_add_window(wm_t *wm, Window win) {
   frame_attr.event_mask = (SubstructureNotifyMask | SubstructureRedirectMask \
                            | ButtonPressMask | ButtonReleaseMask \
                            | EnterWindowMask | LeaveWindowMask);
-  XParseColor(wm->dpy, new_win_attr.screen->cmap, "#330033", &border_color);
+  XParseColor(wm->dpy, wm->screens[0]->cmap, colorstring, &border_color);
+  XAllocColor(wm->dpy, wm->screens[0]->cmap, &border_color);
+  wm_log(wm, LOG_INFO, "%s: color: %d.%d.%d = %d", __func__, border_color.red, border_color.green, border_color.blue, border_color.pixel);
+
   frame_attr.border_pixel = border_color.pixel;
+  //frame_attr.background_pixel = border_color.pixel;
 
   valuemask = CWEventMask | CWBorderPixel;
 
