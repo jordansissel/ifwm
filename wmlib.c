@@ -11,6 +11,22 @@
  * + Store additional properties for all windows via optional struct.
  */
 
+/**
+ * XXX: wm_add_window should really be a callback registered by the consumer of
+ * this library.
+ *
+ * MapRequest handler will call listeners.
+ * One listener can provide a Window which will be used as the parent?
+ * Save a map of window -> client_info? (everyone else does)
+ *
+ * Library consumer should provide:
+ *  Listener for window additions
+ *  Listener for window destructions
+ *  Listener for window state changes (unmap/map notify)
+ *  Listener for metadata updates (resizes, name changes, etc)
+ *  others?
+ *
+ */
 #include "wmlib.h"
 #include <stdio.h>
 #include <stdarg.h>
