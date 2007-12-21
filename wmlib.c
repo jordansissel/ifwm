@@ -27,7 +27,11 @@
  *  others?
  *
  */
+/* for vasprintf in linux */
+#define _GNU_SOURCE 
+
 #include "wmlib.h"
+
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -37,6 +41,7 @@ static void *xmalloc(size_t size) {
   void *ptr;
   ptr = malloc(size);
   if (ptr == NULL) {
+    /* XXX: size == size_t, not int... */
     fprintf(stderr, "malloc(%d) failed\n", size);
     exit(1);
   }
@@ -51,11 +56,12 @@ wm_t *wm_init(char *display_name) {
   wm_x_open(wm, display_name);
   wm_x_init_handlers(wm);
   wm_x_init_screens(wm);
+  wm_x_init_windows(wm);
   return wm;
 }
 
 void wm_x_init_screens(wm_t *wm) {
-  int num_screens = 0;
+  int num_screens;
   int i;
   XSetWindowAttributes attr;
 
@@ -90,6 +96,22 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->event_handlers[PropertyNotify] = wm_event_propertynotify;
   wm->event_handlers[UnmapNotify] = wm_event_unmapnotify;
   wm->event_handlers[DestroyNotify] = wm_event_destroynotify;
+}
+
+void wm_x_init_windows(wm_t *wm) {
+  Window root, parent, *wins;
+  unsigned int nwins;
+  int screen;
+  int nscreens;
+  int i;
+
+  nscreens = ScreenCount(wm->dpy);
+  for (screen = 0; screen < nscreens; screen++) {
+    wm_log(wm, LOG_INFO, "Querying window tree for screen %d", screen);
+    XQueryTree(wm->dpy, wm->screens[screen]->root, &root, &parent, &wins, &nwins);
+    for (i = 0; i < nwins; i++)
+      wm_map_window(wm, wins[i]);
+  }
 }
 
 void wm_set_log_level(wm_t *wm, int log_level) {
@@ -187,7 +209,7 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
   }
 
   // Call handlers?
-  wm_add_window(wm, mrev.window);
+  wm_map_window(wm, mrev.window);
   XUngrabServer(wm->dpy);
 
 }
@@ -230,9 +252,9 @@ void wm_event_unknown(wm_t *wm, XEvent *ev) {
   wm_log(wm, LOG_INFO, "%s: Unknown event type '%d'", __func__, ev->type);
 }
 
-void wm_add_window(wm_t *wm, Window win) {
+void wm_map_window(wm_t *wm, Window win) {
   Window frame;
-  Window root;
+  //Window root;
   XWindowAttributes new_win_attr;
   XSetWindowAttributes frame_attr;
 
@@ -246,7 +268,7 @@ void wm_add_window(wm_t *wm, Window win) {
   int x, y, width, height;
   unsigned long valuemask;
   XColor border_color;
-  int status;
+  //int status;
   char *colorstring = "#999933";
 
   x = new_win_attr.x - BORDER;
@@ -275,6 +297,9 @@ void wm_add_window(wm_t *wm, Window win) {
                         valuemask,
                         &frame_attr);
 
+  /* AddToSaveSet tells X to remember the last parenting
+   * so if we die, the client window we're reparenting doesn't die too. */
+  XAddToSaveSet(wm->dpy, win);
   XReparentWindow(wm->dpy, win, frame, BORDER, TITLE_HEIGHT);
 
   XMapWindow(wm->dpy, win);

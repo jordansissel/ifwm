@@ -31,8 +31,9 @@ void wm_set_log_level(wm_t *wm, int log_level);
 void wm_x_open(wm_t *wm, char *display_name);
 void wm_x_init_screens(wm_t *wm);
 void wm_x_init_handlers(wm_t *wm);
+void wm_x_init_windows(wm_t *wm);
 
-void wm_add_window(wm_t *wm, Window w);
+void wm_map_window(wm_t *wm, Window w);
 
 void wm_event_keypress(wm_t *wm, XEvent *ev);
 void wm_event_buttonpress(wm_t *wm, XEvent *ev);
