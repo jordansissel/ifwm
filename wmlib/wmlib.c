@@ -95,9 +95,9 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->x_event_handlers[UnmapNotify] = wm_event_unmapnotify;
   wm->x_event_handlers[DestroyNotify] = wm_event_destroynotify;
 
-  db_create(&wm->evdb, NULL, 0);
-  wm->evdb->set_flags(wm->evdb, DB_DUP);
-  wm->evdb->open(wm->evdb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0);
+  wm->listeners = list_new();
+  for (i = WM_EVENT_MIN; i < WM_EVENT_MAX; i++)
+    list_append(wm->listeners, list_new());
 }
 
 void wm_x_init_windows(wm_t *wm) {
@@ -214,7 +214,7 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
 
   { // Call handlers
     wm_event_t wmev;
-    wmev.event_name = WM_EVENT_MAPREQUEST;
+    wmev.event_id = WM_EVENT_MAPREQUEST;
     wmev.window = mrev.window;
     wm_listener_call(wm, &wmev);
   }
@@ -259,43 +259,26 @@ void wm_event_unknown(wm_t *wm, XEvent *ev) {
   wm_log(wm, LOG_INFO, "%s: Unknown event type '%d'", __func__, ev->type);
 }
 
-void wm_listener_add(wm_t *wm, char *event_name, wm_event_handler *callback) {
-  DBT key, value;
-  memset(&key, 0, sizeof(DBT));
-  memset(&value, 0, sizeof(DBT));
+void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback) {
+  wm_event_handler callback_copy;
 
-  wm_log(wm, LOG_INFO, "Adding listener for event '%s': %016tx", 
-         event_name, callback);
+  wm_log(wm, LOG_INFO, "Adding listener for event %d: %016tx", 
+         event, callback);
 
-  key.data = event_name;
-  key.size = strlen(event_name) + 1;
-  value.data = callback;
-  value.size = sizeof(wm_event_handler*);
-
-  wm->evdb->put(wm->evdb, NULL, &key, &value, 0);
+  list_append(wm->listeners, callback);
 }
 
 void wm_listener_call(wm_t *wm, wm_event_t *event) {
-  DBT key, value;
-  DBC *cursor;
-  int flags;
-  int ret;
-  memset(&key, 0, sizeof(DBT));
-  memset(&value, 0, sizeof(DBT));
+  int i = 0;
 
-  wm_log(wm, LOG_INFO, "Calling all listeners for event '%s'", event->event_name);
+  wm_log(wm, LOG_INFO, "Calling all listeners for event %d", event->event_id);
 
-  key.data = event->event_name;
-  key.size = strlen(event->event_name) + 1;
-  wm->evdb->cursor(wm->evdb, NULL, &cursor, 0);
-  //flags = DB_SET;
-  flags = DB_FIRST;
-  while ((ret = cursor->c_get(cursor, &key, &value, flags)) == 0) {
-    wm_event_handler *callback = NULL;
-    callback = *(wm_event_handler**)value.data;
-    wm_log(wm, LOG_INFO, "Calling func %016tx", value.data);
+  list_t *callbacks = wm->listeners->items[event->event_id];
+
+  for (i = 0; i < callbacks->nitems; i++) {
+    wm_event_handler callback = callbacks->items[i];
+    wm_log(wm, LOG_INFO, "Calling func %016tx", callback);
     //callback(wm, event);
-    flags = DB_NEXT; //_DUP;
   }
 }
 

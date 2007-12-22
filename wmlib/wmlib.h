@@ -1,9 +1,15 @@
+
+#ifndef WMLIB_H
+#define WMLIB_H
+
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <X11/extensions/shape.h>
 
 #include <db.h>
+
+#include "event_list.h"
 
 #define LOG_FATAL 0
 #define LOG_ERROR 1
@@ -20,12 +26,12 @@ struct wm {
   int log_level;
   Screen **screens;
   x_event_handler *x_event_handlers;
-  DB *evdb;
+  list_t *listeners;
 };
 
 typedef unsigned int wm_event_id;
 typedef struct wm_event {
-  char *event_name;
+  wm_event_id event_id;
   Window window;
   int x;
   int y;
@@ -33,9 +39,11 @@ typedef struct wm_event {
   int height;
 } wm_event_t;
 
-typedef Bool (wm_event_handler)(wm_t *wm, wm_event_t *event);
+typedef Bool (*wm_event_handler)(wm_t *wm, wm_event_t *event);
 
-#define WM_EVENT_MAPREQUEST "maprequest"
+#define WM_EVENT_MIN 2U
+#define WM_EVENT_MAPREQUEST 1U
+#define WM_EVENT_MAX 2U
 
 /* XXX: Check if we have __FUNCTION__ */
 #define __func__ __FUNCTION__
@@ -70,6 +78,7 @@ void wm_event_destroynotify(wm_t *wm, XEvent *ev);
 void wm_event_unknown(wm_t *wm, XEvent *ev);
 
 #define EVENT_WINDOW_ADD 1
-void wm_listener_add(wm_t *wm, char *event_name, wm_event_handler callback);
+void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback);
 void wm_listener_call(wm_t *wm, wm_event_t *event);
 
+#endif /* WMLIB_H */
