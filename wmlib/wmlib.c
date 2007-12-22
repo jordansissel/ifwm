@@ -55,8 +55,6 @@ wm_t *wm_init(char *display_name) {
 
   wm_x_open(wm, display_name);
   wm_x_init_handlers(wm);
-  wm_x_init_screens(wm);
-  wm_x_init_windows(wm);
   return wm;
 }
 
@@ -80,22 +78,26 @@ void wm_x_init_screens(wm_t *wm) {
 void wm_x_init_handlers(wm_t *wm) {
   /* LASTEvent from X11/X.h is the max event value */
   int i;
-  wm->event_handlers = xmalloc(LASTEvent * sizeof(event_handler));
+  wm->x_event_handlers = xmalloc(LASTEvent * sizeof(x_event_handler));
 
   for (i = 0; i < LASTEvent; i++)
-    wm->event_handlers[i] = wm_event_unknown;
+    wm->x_event_handlers[i] = wm_event_unknown;
 
-  wm->event_handlers[KeyPress] = wm_event_keypress;
-  wm->event_handlers[ButtonPress] = wm_event_buttonpress;
-  wm->event_handlers[ButtonRelease] = wm_event_buttonrelease;
-  wm->event_handlers[ConfigureRequest] = wm_event_configurerequest;
-  wm->event_handlers[MapRequest] = wm_event_maprequest;
-  wm->event_handlers[ClientMessage] = wm_event_clientmessage;
-  wm->event_handlers[EnterNotify] = wm_event_enternotify;
-  wm->event_handlers[LeaveNotify] = wm_event_leavenotify;
-  wm->event_handlers[PropertyNotify] = wm_event_propertynotify;
-  wm->event_handlers[UnmapNotify] = wm_event_unmapnotify;
-  wm->event_handlers[DestroyNotify] = wm_event_destroynotify;
+  wm->x_event_handlers[KeyPress] = wm_event_keypress;
+  wm->x_event_handlers[ButtonPress] = wm_event_buttonpress;
+  wm->x_event_handlers[ButtonRelease] = wm_event_buttonrelease;
+  wm->x_event_handlers[ConfigureRequest] = wm_event_configurerequest;
+  wm->x_event_handlers[MapRequest] = wm_event_maprequest;
+  wm->x_event_handlers[ClientMessage] = wm_event_clientmessage;
+  wm->x_event_handlers[EnterNotify] = wm_event_enternotify;
+  wm->x_event_handlers[LeaveNotify] = wm_event_leavenotify;
+  wm->x_event_handlers[PropertyNotify] = wm_event_propertynotify;
+  wm->x_event_handlers[UnmapNotify] = wm_event_unmapnotify;
+  wm->x_event_handlers[DestroyNotify] = wm_event_destroynotify;
+
+  db_create(&wm->evdb, NULL, 0);
+  wm->evdb->set_flags(wm->evdb, DB_DUP);
+  wm->evdb->open(wm->evdb, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0);
 }
 
 void wm_x_init_windows(wm_t *wm) {
@@ -110,7 +112,7 @@ void wm_x_init_windows(wm_t *wm) {
     wm_log(wm, LOG_INFO, "Querying window tree for screen %d", screen);
     XQueryTree(wm->dpy, wm->screens[screen]->root, &root, &parent, &wins, &nwins);
     for (i = 0; i < nwins; i++)
-      wm_map_window(wm, wins[i]);
+      wm_fake_maprequest(wm, wins[i]);
   }
 }
 
@@ -152,10 +154,12 @@ void wm_x_open(wm_t *wm, char *display_name) {
 
 void wm_main(wm_t *wm) {
   XEvent ev;
+  wm_x_init_screens(wm);
+  wm_x_init_windows(wm);
 
   for (;;) {
     XNextEvent(wm->dpy, &ev);
-    wm->event_handlers[ev.type](wm, &ev);
+    wm->x_event_handlers[ev.type](wm, &ev);
   }
 }
 
@@ -208,10 +212,13 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
     return;
   }
 
-  // Call handlers?
-  wm_map_window(wm, mrev.window);
+  { // Call handlers
+    wm_event_t wmev;
+    wmev.event_name = WM_EVENT_MAPREQUEST;
+    wmev.window = mrev.window;
+    wm_listener_call(wm, &wmev);
+  }
   XUngrabServer(wm->dpy);
-
 }
 
 void wm_event_clientmessage(wm_t *wm, XEvent *ev) {
@@ -250,6 +257,52 @@ void wm_event_destroynotify(wm_t *wm, XEvent *ev) {
 
 void wm_event_unknown(wm_t *wm, XEvent *ev) {
   wm_log(wm, LOG_INFO, "%s: Unknown event type '%d'", __func__, ev->type);
+}
+
+void wm_listener_add(wm_t *wm, char *event_name, wm_event_handler *callback) {
+  DBT key, value;
+  memset(&key, 0, sizeof(DBT));
+  memset(&value, 0, sizeof(DBT));
+
+  wm_log(wm, LOG_INFO, "Adding listener for event '%s': %016tx", 
+         event_name, callback);
+
+  key.data = event_name;
+  key.size = strlen(event_name) + 1;
+  value.data = callback;
+  value.size = sizeof(wm_event_handler*);
+
+  wm->evdb->put(wm->evdb, NULL, &key, &value, 0);
+}
+
+void wm_listener_call(wm_t *wm, wm_event_t *event) {
+  DBT key, value;
+  DBC *cursor;
+  int flags;
+  int ret;
+  memset(&key, 0, sizeof(DBT));
+  memset(&value, 0, sizeof(DBT));
+
+  wm_log(wm, LOG_INFO, "Calling all listeners for event '%s'", event->event_name);
+
+  key.data = event->event_name;
+  key.size = strlen(event->event_name) + 1;
+  wm->evdb->cursor(wm->evdb, NULL, &cursor, 0);
+  //flags = DB_SET;
+  flags = DB_FIRST;
+  while ((ret = cursor->c_get(cursor, &key, &value, flags)) == 0) {
+    wm_event_handler *callback = NULL;
+    callback = *(wm_event_handler**)value.data;
+    wm_log(wm, LOG_INFO, "Calling func %016tx", value.data);
+    //callback(wm, event);
+    flags = DB_NEXT; //_DUP;
+  }
+}
+
+void wm_fake_maprequest(wm_t *wm, Window w) {
+  XEvent e;
+  e.xmaprequest.window = w;
+  wm_event_maprequest(wm, &e);
 }
 
 void wm_map_window(wm_t *wm, Window win) {
