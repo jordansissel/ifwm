@@ -36,13 +36,13 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dlfcn.h>
 
 static void *xmalloc(size_t size) {
   void *ptr;
   ptr = malloc(size);
   if (ptr == NULL) {
-    /* XXX: size == size_t, not int... */
-    fprintf(stderr, "malloc(%d) failed\n", size);
+    fprintf(stderr, "malloc(%td) failed\n", size);
     exit(1);
   }
   memset(ptr, 0, size);
@@ -87,6 +87,7 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->x_event_handlers[ButtonPress] = wm_event_buttonpress;
   wm->x_event_handlers[ButtonRelease] = wm_event_buttonrelease;
   wm->x_event_handlers[ConfigureRequest] = wm_event_configurerequest;
+  wm->x_event_handlers[ConfigureNotify] = wm_event_configurenotify;
   wm->x_event_handlers[MapRequest] = wm_event_maprequest;
   wm->x_event_handlers[ClientMessage] = wm_event_clientmessage;
   wm->x_event_handlers[EnterNotify] = wm_event_enternotify;
@@ -95,9 +96,10 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->x_event_handlers[UnmapNotify] = wm_event_unmapnotify;
   wm->x_event_handlers[DestroyNotify] = wm_event_destroynotify;
 
-  wm->listeners = list_new();
+  void *dl = dlopen(NULL, RTLD_LAZY);
+  wm->listeners = malloc(WM_EVENT_MAX * sizeof(wm_event_handler));
   for (i = WM_EVENT_MIN; i < WM_EVENT_MAX; i++)
-    list_append(wm->listeners, list_new());
+    wm->listeners[i] = NULL;
 }
 
 void wm_x_init_windows(wm_t *wm) {
@@ -150,6 +152,8 @@ void wm_x_open(wm_t *wm, char *display_name) {
   wm->dpy = XOpenDisplay(display_name);
   if (wm->dpy == NULL)
     wm_log(wm, LOG_FATAL, "Failed opening display: '%s'", display_name);
+
+  wm->context = XUniqueContext();
 }
 
 void wm_main(wm_t *wm) {
@@ -168,9 +172,55 @@ void wm_event_keypress(wm_t *wm, XEvent *ev) {
   wm_log(wm, LOG_INFO, "%s", __func__);
 }
 
+void wm_get_mouse_position(wm_t *wm, int *x, int *y, Window window) {
+  Window unused_root, unused_child;
+  unsigned int unused_mask;
+  int unused_root_x, unused_root_y;
+
+  XQueryPointer(wm->dpy, window, &unused_root, &unused_child,
+                &unused_root_x, &unused_root_y, x, y, &unused_mask);
+}
+
 void wm_event_buttonpress(wm_t *wm, XEvent *ev) {
   XButtonEvent bev = ev->xbutton;
+  XWindowAttributes attr;
+  int offset_x, offset_y;
+  int old_win_x, old_win_y;
   wm_log(wm, LOG_INFO, "%s", __func__);
+  XGetWindowAttributes(wm->dpy, bev.window, &attr);
+
+  // GrabPointer for mousemask
+  XGrabPointer(wm->dpy, attr.root, False, MouseEventMask,
+               GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+
+  old_win_x = attr.x;
+  old_win_x = attr.y;
+  wm_get_mouse_position(wm, &offset_x, &offset_y, attr.root);
+
+  offset_x = offset_x - attr.x;
+  offset_y = offset_y - attr.y;
+
+  if (attr.screen->root != bev.window) {
+    /* Window button event */
+    for (;;) {
+      XEvent ev;
+      XMaskEvent(wm->dpy, MouseEventMask, &ev);
+      switch (ev.type) {
+        case MotionNotify:
+          XMoveWindow(wm->dpy, bev.window,
+                      ev.xmotion.x - offset_x,
+                      ev.xmotion.y - offset_y);
+          break;
+        case ButtonRelease:
+          XUngrabPointer(wm->dpy, CurrentTime);
+          return;
+          break;
+      }
+    }
+  } else {
+    /* Root button event */
+  }
+
 }
 
 void wm_event_buttonrelease(wm_t *wm, XEvent *ev) {
@@ -193,21 +243,34 @@ void wm_event_configurerequest(wm_t *wm, XEvent *ev) {
   XConfigureWindow(wm->dpy, crev.window, crev.value_mask, &wc);
 }
 
+void wm_event_configurenotify(wm_t *wm, XEvent *ev) {
+  XConfigureEvent cev;
+  XWindowChanges changes;
+  unsigned long valuemask = 0;
+  wm_log(wm, LOG_INFO, "%s: %d reconfigured.", __func__, cev.window);
+
+  if (cev.border_width > 0) {
+    changes.border_width = 0;
+    valuemask |= CWBorderWidth;
+  }
+
+}
+
 void wm_event_maprequest(wm_t *wm, XEvent *ev) {
   XMapRequestEvent mrev = ev->xmaprequest;
   XWindowAttributes attr;
+  client_t *c;
   wm_log(wm, LOG_INFO, "%s", __func__);
 
+  /* I grab here because everyone else seems to do this */
   XGrabServer(wm->dpy);
-  if (!XGetWindowAttributes(wm->dpy, mrev.window, &attr)) {
-    wm_log(wm, LOG_ERROR, "%s: XGetWindowAttributes failed", __func__);
-    XUngrabServer(wm->dpy);
-    return;
-  }
 
-  if (attr.override_redirect) {
+  c = wm_get_client(wm, mrev.window, True);
+
+  if (c->attr.override_redirect) {
     wm_log(wm, LOG_INFO, "%s: skipping window %d, override_redirect is set",
            __func__, mrev.window);
+    XMapWindow(wm->dpy, c->window);
     XUngrabServer(wm->dpy);
     return;
   }
@@ -265,27 +328,38 @@ void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback) {
   wm_log(wm, LOG_INFO, "Adding listener for event %d: %016tx", 
          event, callback);
 
-  list_append(wm->listeners, callback);
+  if (event >= WM_EVENT_MAX) {
+    wm_log(wm, LOG_FATAL, 
+           "Attempt to register for event '%d' when max event is '%d'",
+           event, WM_EVENT_MAX);
+  }
+  wm->listeners[event] = callback;
 }
 
 void wm_listener_call(wm_t *wm, wm_event_t *event) {
   int i = 0;
+  wm_event_handler callback;
 
   wm_log(wm, LOG_INFO, "Calling all listeners for event %d", event->event_id);
 
-  list_t *callbacks = wm->listeners->items[event->event_id];
-
-  for (i = 0; i < callbacks->nitems; i++) {
-    wm_event_handler callback = callbacks->items[i];
-    wm_log(wm, LOG_INFO, "Calling func %016tx", callback);
-    //callback(wm, event);
-  }
+  callback = wm->listeners[event->event_id];
+  wm_log(wm, LOG_INFO, "Calling func %016tx", callback);
+  callback(wm, event);
 }
 
 void wm_fake_maprequest(wm_t *wm, Window w) {
   XEvent e;
   e.xmaprequest.window = w;
   wm_event_maprequest(wm, &e);
+}
+
+Bool wm_grab_button(wm_t *wm, Window window, unsigned int mask, unsigned int button) {
+  unsigned int event_mask = ButtonPressMask | ButtonReleaseMask;
+  XGrabButton(wm->dpy, button, mask, window, False, event_mask,
+              GrabModeAsync, GrabModeSync, None, None);
+  XGrabButton(wm->dpy, button, LockMask|mask, window, False, event_mask,
+              GrabModeAsync, GrabModeSync, None, None);
+  /* handle numlock mask */
 }
 
 void wm_map_window(wm_t *wm, Window win) {
@@ -341,5 +415,26 @@ void wm_map_window(wm_t *wm, Window win) {
   XMapWindow(wm->dpy, win);
   XMapWindow(wm->dpy, frame);
   XRaiseWindow(wm->dpy, frame);
+}
+
+client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
+  client_t *c;
+  int ret;
+  ret = XFindContext(wm->dpy, window, wm->context, (XPointer*)&c);
+
+  if (ret == XCNOENT) { /* window not found */
+    XWindowAttributes attr;
+
+    wm_log(wm, LOG_INFO, "New window: %d", window);
+    XGetWindowAttributes(wm->dpy, window, &attr);
+
+    c = xmalloc(sizeof(client_t));
+    c->window = window;
+    memcpy(&(c->attr), &attr, sizeof(XWindowAttributes));
+    c->screen = attr.screen;
+    XSaveContext(wm->dpy, window, wm->context, (XPointer)c);
+  }
+
+  return c;
 }
 
