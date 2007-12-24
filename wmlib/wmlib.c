@@ -49,13 +49,16 @@ static void *xmalloc(size_t size) {
   return ptr;
 }
 
-wm_t *wm_init(char *display_name) {
+wm_t *wm_create(char *display_name) {
   wm_t *wm = NULL;
   wm = xmalloc(sizeof(wm_t));
-
   wm_x_open(wm, display_name);
   wm_x_init_handlers(wm);
-  return wm;
+  wm_x_init_screens(wm);
+}
+
+void wm_x_init(wm_t *wm);
+  wm_x_init_windows(wm);
 }
 
 void wm_x_init_screens(wm_t *wm) {
@@ -67,6 +70,8 @@ void wm_x_init_screens(wm_t *wm) {
                     | EnterWindowMask | LeaveWindowMask;
 
   num_screens = ScreenCount(wm->dpy);
+
+  wm_log(wm, LOG_INFO, "setting num screens: %d", num_screens);
   wm->num_screens = num_screens;
   wm->screens = xmalloc(num_screens * sizeof(Screen*));
   for (i = 0; i < num_screens; i++) {
@@ -159,8 +164,6 @@ void wm_x_open(wm_t *wm, char *display_name) {
 
 void wm_main(wm_t *wm) {
   XEvent ev;
-  wm_x_init_screens(wm);
-  wm_x_init_windows(wm);
 
   for (;;) {
     XNextEvent(wm->dpy, &ev);
@@ -279,8 +282,12 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
   { // Call handlers
     wm_event_t wmev;
     wmev.event_id = WM_EVENT_MAPREQUEST;
-    wmev.window = mrev.window;
-    wm_listener_call(wm, &wmev);
+    wmev.client = c;
+    if (wmev.client == NULL) {
+      wm_log(wm, LOG_ERROR, "could not find client for window '%d'", mrev.window);
+    } else {
+      wm_listener_call(wm, &wmev);
+    }
   }
   XUngrabServer(wm->dpy);
 }
@@ -334,6 +341,7 @@ void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback) {
            "Attempt to register for event '%d' when max event is '%d'",
            event, WM_EVENT_MAX);
   }
+  
   wm->listeners[event] = callback;
 }
 
@@ -341,9 +349,11 @@ void wm_listener_call(wm_t *wm, wm_event_t *event) {
   int i = 0;
   wm_event_handler callback;
 
-  wm_log(wm, LOG_INFO, "Calling all listeners for event %d", event->event_id);
-
   callback = wm->listeners[event->event_id];
+  if (callback == NULL) {
+    wm_log(wm, LOG_INFO, "No callback registered for event %d", event->event_id);
+    return;
+  }
   wm_log(wm, LOG_INFO, "Calling func %016tx", callback);
   callback(wm, event);
 }
@@ -434,6 +444,7 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
     memcpy(&(c->attr), &attr, sizeof(XWindowAttributes));
     c->screen = attr.screen;
     XSaveContext(wm->dpy, window, wm->context, (XPointer)c);
+    XAddToSaveSet(wm->dpy, window);
   }
 
   return c;

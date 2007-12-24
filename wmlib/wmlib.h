@@ -33,21 +33,21 @@ struct wm {
   XContext context;
 };
 
-typedef unsigned int wm_event_id;
-struct wm_event {
-  wm_event_id event_id;
-  Window window;
-  int x;
-  int y;
-  int width;
-  int height;
-};
-
 typedef struct client {
   Window window;
   XWindowAttributes attr;
   Screen *screen;
 } client_t;
+
+typedef unsigned int wm_event_id;
+struct wm_event {
+  wm_event_id event_id;
+  client_t *client;
+  int x;
+  int y;
+  int width;
+  int height;
+};
 
 #define ButtonEventMask ButtonPressMask|ButtonReleaseMask
 #define MouseEventMask ButtonPressMask|ButtonReleaseMask|PointerMotionMask
@@ -60,7 +60,8 @@ typedef struct client {
 /* XXX: Check if we have __FUNCTION__ */
 #define __func__ __FUNCTION__
 
-wm_t *wm_init(char *display_name);
+wm_t *wm_create(char *display_name);
+void wm_init(wm_t *wm);
 void wm_main(wm_t *wm);
 
 int wm_get_log_level(wm_t *wm, int log_level);

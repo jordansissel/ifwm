@@ -18,27 +18,29 @@ static void *xmalloc(size_t size) {
   return ptr;
 }
 
-
-XContext container_context;
+container_t *current_container;
 
 int main(int argc, char **argv) {
   wm_t *wm = NULL;
   int i;
-  wm = wm_init(NULL);
+  wm = wm_create(NULL);
   wm_set_log_level(wm, LOG_INFO);
 
-  container_context = XUniqueContext();
-
+  wm_log(wm, LOG_INFO, "== num screens: %d", wm->num_screens);
   for (i = 0; i < wm->num_screens; i++) {
     XWindowAttributes attr;
     Window root = wm->screens[i]->root;;
     container_t *root_container;
     XGetWindowAttributes(wm->dpy, root, &attr);
-    root_container = container_new(wm, root, attr.x, attr.y, attr.width, attr.height);
+    root_container = container_new(wm, root, attr.x, attr.y, 
+                                   attr.width, attr.height);
     container_show(root_container);
+    wm_log(wm, LOG_INFO, "Setting current container to %tx", root_container);
+    current_container = root_container;
   }
 
-  /* Create workspace */
+  wm_listener_add(wm, WM_EVENT_MAPREQUEST, addwin);
+  wm_init(wm);
   wm_main(wm);
 
   return 0;
@@ -60,12 +62,29 @@ Bool container_show(container_t *container) {
   return True;
 }
 
+Bool container_client_add(container_t *container, client_t *client) {
+  XWindowAttributes attr;
+  wm_log(container->wm, LOG_INFO, "%s: client add window %d", __func__, client);
+  XGetWindowAttributes(container->wm->dpy, client->window, &attr);
+  XReparentWindow(container->wm->dpy, client->window, container->frame, 0, TITLE_HEIGHT);
+  XSetWindowBorderWidth(container->wm->dpy, client->window, 0);
+  XResizeWindow(container->wm->dpy, client->window, attr.width, attr.height);
+  XMapRaised(container->wm->dpy, client->window);
+  return True;
+}
+
 Bool addwin(wm_t *wm, wm_event_t *event) {
+  wm_log(wm, LOG_INFO, "%s: %d / %d", __func__, event->event_id, event->client->window);
+  container_client_add(current_container, event->client);
+  return True;
+}
+
+Bool _addwin(wm_t *wm, wm_event_t *event) {
   Window new_window;
   Window frame;
   wm_log(wm, LOG_INFO, "addwin!");
 
-  new_window = event->window;
+  new_window = event->client->window;
 
   XGrabServer(wm->dpy);
   //frame = mkframe(wm, new_window);
