@@ -2,12 +2,12 @@
 #ifndef WMLIB_H
 #define WMLIB_H
 
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/keysym.h>
-#include <X11/extensions/shape.h>
-
 #include <db.h>
+#include <X11/extensions/shape.h>
+#include <X11/keysym.h>
+#include <X11/Xlib.h>
+#include <X11/Xresource.h>
+#include <X11/Xutil.h>
 
 //include "event_list.h"
 
@@ -27,6 +27,7 @@ struct wm {
   Display *dpy;
   int log_level;
   Screen **screens;
+  int num_screens;
   x_event_handler *x_event_handlers;
   wm_event_handler *listeners;
   XContext context;

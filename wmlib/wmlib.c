@@ -67,6 +67,7 @@ void wm_x_init_screens(wm_t *wm) {
                     | EnterWindowMask | LeaveWindowMask;
 
   num_screens = ScreenCount(wm->dpy);
+  wm->num_screens = num_screens;
   wm->screens = xmalloc(num_screens * sizeof(Screen*));
   for (i = 0; i < num_screens; i++) {
     wm->screens[i] = ScreenOfDisplay(wm->dpy, i);
