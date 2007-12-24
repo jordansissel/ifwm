@@ -16,7 +16,6 @@ int main(int argc, char **argv) {
   wm_listener_add(wm, WM_EVENT_MAPREQUEST, addwin);
 
   /* Create workspace */
-
   wm_main(wm);
 
   return 0;
