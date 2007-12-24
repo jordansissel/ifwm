@@ -51,14 +51,16 @@ static void *xmalloc(size_t size) {
 
 wm_t *wm_create(char *display_name) {
   wm_t *wm = NULL;
+  int i;
   wm = xmalloc(sizeof(wm_t));
   wm_x_open(wm, display_name);
-  wm_x_init_handlers(wm);
   wm_x_init_screens(wm);
-}
 
-void wm_x_init(wm_t *wm);
-  wm_x_init_windows(wm);
+  wm->listeners = malloc(WM_EVENT_MAX * sizeof(wm_event_handler));
+  for (i = WM_EVENT_MIN; i < WM_EVENT_MAX; i++)
+    wm->listeners[i] = NULL;
+
+  return wm;
 }
 
 void wm_x_init_screens(wm_t *wm) {
@@ -101,11 +103,6 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->x_event_handlers[PropertyNotify] = wm_event_propertynotify;
   wm->x_event_handlers[UnmapNotify] = wm_event_unmapnotify;
   wm->x_event_handlers[DestroyNotify] = wm_event_destroynotify;
-
-  void *dl = dlopen(NULL, RTLD_LAZY);
-  wm->listeners = malloc(WM_EVENT_MAX * sizeof(wm_event_handler));
-  for (i = WM_EVENT_MIN; i < WM_EVENT_MAX; i++)
-    wm->listeners[i] = NULL;
 }
 
 void wm_x_init_windows(wm_t *wm) {
@@ -164,6 +161,9 @@ void wm_x_open(wm_t *wm, char *display_name) {
 
 void wm_main(wm_t *wm) {
   XEvent ev;
+
+  wm_x_init_handlers(wm);
+  wm_x_init_windows(wm);
 
   for (;;) {
     XNextEvent(wm->dpy, &ev);
@@ -270,6 +270,9 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
   XGrabServer(wm->dpy);
 
   c = wm_get_client(wm, mrev.window, True);
+
+  if (c == NULL)
+    return;
 
   if (c->attr.override_redirect) {
     wm_log(wm, LOG_INFO, "%s: skipping window %d, override_redirect is set",
@@ -435,16 +438,26 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
 
   if (ret == XCNOENT) { /* window not found */
     XWindowAttributes attr;
-
+    XGrabServer(wm->dpy);
+    Status ret;
     wm_log(wm, LOG_INFO, "New window: %d", window);
-    XGetWindowAttributes(wm->dpy, window, &attr);
-
+    ret = XGetWindowAttributes(wm->dpy, window, &attr);
+    if (attr.class == InputOnly) {
+      wm_log(wm, LOG_INFO, "%s: Window class is InputOnly", __func__);
+      return NULL;
+    }
+    wm_log(wm, LOG_INFO, "ret: %d", ret);
+    wm_log(wm, LOG_INFO, "window: %d = %dx%d@%d,%d", 
+           window, attr.width, attr.height, attr.x, attr.y);
     c = xmalloc(sizeof(client_t));
     c->window = window;
-    memcpy(&(c->attr), &attr, sizeof(XWindowAttributes));
     c->screen = attr.screen;
+    memcpy(&(c->attr), &attr, sizeof(XWindowAttributes));
     XSaveContext(wm->dpy, window, wm->context, (XPointer)c);
-    XAddToSaveSet(wm->dpy, window);
+    //wm_log(wm, LOG_INFO, "Saveset: %d", window);
+    //XAddToSaveSet(wm->dpy, window);
+    XSync(wm->dpy, False);
+    //XUngrabServer(wm->dpy);
   }
 
   return c;

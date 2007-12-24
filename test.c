@@ -40,7 +40,6 @@ int main(int argc, char **argv) {
   }
 
   wm_listener_add(wm, WM_EVENT_MAPREQUEST, addwin);
-  wm_init(wm);
   wm_main(wm);
 
   return 0;
@@ -64,11 +63,12 @@ Bool container_show(container_t *container) {
 
 Bool container_client_add(container_t *container, client_t *client) {
   XWindowAttributes attr;
-  wm_log(container->wm, LOG_INFO, "%s: client add window %d", __func__, client);
-  XGetWindowAttributes(container->wm->dpy, client->window, &attr);
+  wm_log(container->wm, LOG_INFO, "%s: client add window %d", __func__, client->window);
+  XAddToSaveSet(container->wm->dpy, client->window);
+  XGetWindowAttributes(container->wm->dpy, container->frame, &attr);
   XReparentWindow(container->wm->dpy, client->window, container->frame, 0, TITLE_HEIGHT);
   XSetWindowBorderWidth(container->wm->dpy, client->window, 0);
-  XResizeWindow(container->wm->dpy, client->window, attr.width, attr.height);
+  XResizeWindow(container->wm->dpy, client->window, attr.width, attr.height - TITLE_HEIGHT);
   XMapRaised(container->wm->dpy, client->window);
   return True;
 }
@@ -91,7 +91,6 @@ Bool _addwin(wm_t *wm, wm_event_t *event) {
   if (frame == 0)
     return False;
 
-  XAddToSaveSet(wm->dpy, new_window);
   XSetWindowBorderWidth(wm->dpy, new_window, 0);
   XReparentWindow(wm->dpy, new_window, frame, 0, TITLE_HEIGHT);
   XMapWindow(wm->dpy, frame);
@@ -134,6 +133,7 @@ Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height) {
                         visual,
                         valuemask,
                         &frame_attr);
+  wm_log(wm, LOG_INFO, "%s; Created window %d", __func__, frame);
   return frame;
 }
 
