@@ -28,6 +28,9 @@ int main(int argc, char **argv) {
   wm = wm_create(NULL);
   wm_set_log_level(wm, LOG_INFO);
 
+  container_context = XUniqueContext();
+  client_container_context = XUniqueContext();
+
   wm_log(wm, LOG_INFO, "== num screens: %d", wm->num_screens);
   for (i = 0; i < wm->num_screens; i++) {
     XWindowAttributes attr;
@@ -40,9 +43,8 @@ int main(int argc, char **argv) {
     current_container = root_container;
 
     /* Grab keys */
-    int ret;
-    ret = XGrabKey(wm->dpy, 44, Mod1Mask, root, False, GrabModeAsync, GrabModeAsync);
-    wm_log(wm, LOG_INFO, "GrabKey result: %d", ret);
+    XGrabKey(wm->dpy, XKeysymToKeycode(wm->dpy, XK_j), Mod1Mask, root, False, GrabModeAsync, GrabModeAsync);
+    XGrabKey(wm->dpy, XKeysymToKeycode(wm->dpy, XK_h), Mod1Mask, root, False, GrabModeAsync, GrabModeAsync);
   }
 
   container_focus(current_container);
@@ -122,14 +124,14 @@ Bool container_client_add(container_t *container, client_t *client) {
   wm_log(container->wm, LOG_INFO, "%s: client add window %d", __func__, client->window);
   XAddToSaveSet(container->wm->dpy, client->window);
   XGetWindowAttributes(container->wm->dpy, container->frame, &attr);
-  XReparentWindow(container->wm->dpy, client->window, container->frame, 0, TITLE_HEIGHT);
   XSetWindowBorderWidth(container->wm->dpy, client->window, 0);
-  XResizeWindow(container->wm->dpy, client->window, attr.width, attr.height - TITLE_HEIGHT);
   XSelectInput(container->wm->dpy, client->window, CLIENT_EVENT_MASK);
+  XReparentWindow(container->wm->dpy, client->window, container->frame, 0, TITLE_HEIGHT);
+  XResizeWindow(container->wm->dpy, client->window, attr.width, attr.height - TITLE_HEIGHT);
   XSaveContext(container->wm->dpy, client->window, client_container_context, (XPointer)container);
 
-  container_client_show(container, client);
   container_paint(container);
+  container_client_show(container, client);
   return True;
 }
 
@@ -146,10 +148,9 @@ Bool container_paint(container_t *container) {
 }
 
 Bool container_client_show(container_t *container, client_t *client) {
-  XMapWindow(container->wm->dpy, client->window);
-  XFlush(container->wm->dpy);
-
+  XMapRaised(container->wm->dpy, client->window);
   XSetInputFocus(container->wm->dpy, client->window, RevertToParent, CurrentTime);
+  XFlush(container->wm->dpy);
   return True;
 }
 
@@ -164,16 +165,21 @@ Bool focus_container(wm_t *wm, wm_event_t *event) {
 
   //wm_log(wm, LOG_INFO, "%s", __func__);
 
-  ret = XFindContext(wm->dpy, event->client->window, client_container_context, 
+  ret = XFindContext(wm->dpy, event->client->window, client_container_context,
                      (XPointer*)&container);
   if (ret == XCNOENT) {
-    wm_log(wm, LOG_INFO, "no container found for window %d, can't focus.", event->client->window);
-    return False;
+    /* See if this window is a container */
+    ret = XFindContext(wm->dpy, event->client->window, container_context,
+                       (XPointer*)&container);
+    if (ret == XCNOENT) {
+      wm_log(wm, LOG_INFO, "no container found for window %d, can't focus.", event->client->window);
+      return False;
+    }
   }
 
   container_blur(current_container);
-  container_focus(container);
   current_container = container;
+  container_focus(container);
 
   return True;
 }
@@ -182,12 +188,12 @@ Bool expose_container(wm_t *wm, wm_event_t *event) {
   container_t *container;
   int ret;
 
-  wm_log(wm, LOG_INFO, "%s", __func__);
+  wm_log(wm, LOG_INFO, "%s!!!", __func__);
 
   ret = XFindContext(wm->dpy, event->client->window, container_context, 
                      (XPointer*)&container);
   if (ret == XCNOENT) {
-    wm_log(wm, LOG_INFO, "no container found for window %d, can't focus.", event->client->window);
+    wm_log(wm, LOG_INFO, "no container for window %d, can't expose.", event->client->window);
     return False;
   }
 
@@ -200,12 +206,22 @@ Bool keypress(wm_t *wm, wm_event_t *event) {
   XKeyEvent kev = event->xevent->xkey;
   KeySym sym;
 
+  XUngrabServer(wm->dpy);
+  XFlush(wm->dpy);
   wm_log(wm, LOG_INFO, "%s", __func__);
   sym = XKeycodeToKeysym(wm->dpy, kev.keycode, 0);
   wm_log(wm, LOG_INFO, "%s: key %d / %d", __func__, sym, XK_j);
-  if (sym == XK_j && kev.state & Mod1Mask) {
-    container_split_horizontal(current_container);
-    XUngrabServer(current_container->wm->dpy);
+  if (kev.state == Mod1Mask) {
+    switch (sym) {
+      case XK_j:
+        //container_split_vertical(current_container);
+        break;
+      case XK_h:
+        //container_split_horizontal(current_container);
+        break;
+      default:
+        wm_log(wm, LOG_WARN, "%s: unexpected keysym %d", __func__, sym);
+    }
   }
   return True;
 }
@@ -254,24 +270,24 @@ Bool container_focus(container_t *container) {
   Window dummy;
   Window *children;
   unsigned int nchildren;
+  int ret;
 
   container->focused = True;
 
   XQueryTree(container->wm->dpy, container->frame, &dummy, &dummy, &children, &nchildren);
   wm_log(container->wm, LOG_INFO, "%s: num children of container: %ud", __func__, nchildren);
-  if (nchildren > 0)
-    XSetInputFocus(container->wm->dpy, children[nchildren - 1], RevertToParent, CurrentTime);
-  else
-    XSetInputFocus(container->wm->dpy, container->frame, RevertToParent, CurrentTime);
+  ret = XSetInputFocus(container->wm->dpy, container->frame, RevertToParent, CurrentTime);
+  printf("OMG: %d\n", ret);
+  if (nchildren > 0) {
+    ret = XSetInputFocus(container->wm->dpy, children[nchildren - 1], RevertToParent, CurrentTime);
+    printf("OMG: %d\n", ret);
 
+  }
   return True;
 }
 
 Bool container_split_horizontal(container_t *container) {
   XWindowAttributes attr;
-  Window *children = NULL;
-  Window dummy;
-  unsigned int nchildren;
   unsigned int width, height;
   container_t *new_container;
 
@@ -286,21 +302,56 @@ Bool container_split_horizontal(container_t *container) {
                                 attr.x + width, attr.y,
                                 width, height);
   container_show(new_container);
+  XFlush(container->wm->dpy);
+
+  container_relocate_top_client(container, new_container);
+  container_paint(container);
+  container_paint(new_container);
+  return True;
+}
+
+Bool container_split_vertical(container_t *container) {
+  XWindowAttributes attr;
+  unsigned int width, height;
+  container_t *new_container;
+
+  wm_log(container->wm, LOG_INFO, "%s: horizontal split", __func__);
+
+  XGetWindowAttributes(container->wm->dpy, container->frame, &attr);
+  width = attr.width;
+  height = attr.height / 2;
+
+  container_moveresize(container, attr.x, attr.y, width, height);
+  new_container = container_new(container->wm, attr.root,
+                                attr.x, attr.y + height,
+                                width, height);
+  container_show(new_container);
+  XFlush(container->wm->dpy);
+
+  container_relocate_top_client(container, new_container);
+  container_paint(container);
+  container_paint(new_container);
+  return True;
+}
+
+Bool container_relocate_top_client(container_t *src, container_t *dest) {
+  Window *children = NULL;
+  Window dummy;
+  unsigned int nchildren;
 
   /* Move the top window on container to new_container */
-  XQueryTree(container->wm->dpy, container->frame, &dummy, &dummy, 
-             &children, &nchildren);
+  XQueryTree(src->wm->dpy, src->frame, &dummy, &dummy, &children, &nchildren);
   if (nchildren == 0)
     return True;
 
   client_t *client = NULL;
-  client = wm_get_client(container->wm, children[nchildren - 1], False);
+  client = wm_get_client(src->wm, children[nchildren - 1], False);
   if (client == NULL) {
-    wm_log(container->wm, LOG_ERROR, "%s: XFindContext for top child window of container %d failed?", __func__, container->frame);
+    wm_log(src->wm, LOG_ERROR, "%s: XFindContext for top child window of container %d failed?", __func__, src->frame);
     return False;
   }
 
-  container_client_add(new_container, client);
+  container_client_add(dest, client);
   XFree(children);
   return True;
 }
@@ -321,4 +372,3 @@ Bool container_moveresize(container_t *container, int x, int y, unsigned int wid
     XFree(children);
   return True;
 }
-

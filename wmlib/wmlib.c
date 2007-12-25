@@ -306,6 +306,7 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
 void wm_event_mapnotify(wm_t *wm, XEvent *ev) {
   XMapEvent mev = ev->xmap;
   wm_log(wm, LOG_INFO, "%s: mapnotify %d", __func__, mev.window);
+  wm_get_client(wm, mev.window, True);
 }
 
 void wm_event_clientmessage(wm_t *wm, XEvent *ev) {
@@ -324,7 +325,7 @@ void wm_event_enternotify(wm_t *wm, XEvent *ev) {
 
 void wm_event_leavenotify(wm_t *wm, XEvent *ev) {
   XEnterWindowEvent ewev = ev->xcrossing;
-  wm_log(wm, LOG_INFO, "%s", __func__);
+  //wm_log(wm, LOG_INFO, "%s", __func__);
 }
 
 void wm_event_propertynotify(wm_t *wm, XEvent *ev) {
@@ -379,6 +380,11 @@ void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent 
   wm_event_handler callback;
 
   //wm_log(wm, LOG_ERROR, "could not find client for window '%d'", mrev.window);
+
+  if (client == NULL) {
+    wm_log(wm, LOG_WARN, "%s: Rejecting call for event %d because client is null", __func__, event_id);
+    return;
+  }
 
   event.event_id = event_id;
   event.xevent = ev;
@@ -464,7 +470,7 @@ void wm_map_window(wm_t *wm, Window win) {
 }
 
 client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
-  client_t *c;
+  client_t *c = NULL;
   int ret;
   ret = XFindContext(wm->dpy, window, wm->context, (XPointer*)&c);
 

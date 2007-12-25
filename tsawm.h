@@ -9,8 +9,10 @@
 
 #define FRAME_EVENT_MASK (\
   ExposureMask | EnterWindowMask | LeaveWindowMask \
+  | MapNotify \
   | ButtonPressMask | ButtonReleaseMask \
   )
+  //| StructureNotifyMask | SubstructureRedirectMask 
 #define CLIENT_EVENT_MASK (EnterWindowMask | LeaveWindowMask)
 
 typedef  struct container {
@@ -42,7 +44,9 @@ Bool container_blur(container_t *container);
 Bool container_focus(container_t *container);
 Bool container_create_gc(container_t *container);
 Bool container_paint(container_t *container);
+Bool container_relocate_top_client(container_t *from, container_t *to);
 
 Bool container_split_horizontal(container_t *container);
+Bool container_split_vertical(container_t *container);
 Bool container_moveresize(container_t *container, int x, int y, unsigned int width, unsigned int height);
 

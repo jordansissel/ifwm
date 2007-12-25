@@ -11,6 +11,8 @@ clean:
 
 CFLAGS+=-g
 
+test.c: tsawm.h
+
 %.o: %.c
 	gcc $(CFLAGS) -c -o $@  $<
 
