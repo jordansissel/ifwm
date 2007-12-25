@@ -9,16 +9,8 @@ all: wmlib.so
 clean:
 	rm *.o || true
 
-wmlib.c: wmlib.h
-event_list.c: event_list.h
-
-wmlib.a: wmlib.o event_list.o
-	gcc $(LDFLAGS) wmlib.o event_list.o -o wmlib.a
-	
+wmlib.o: wmlib.h
 
 %.o: %.c
 	gcc $(CFLAGS) -c -o $@  $<
-
-%.so: %.o
-	gcc -shared $(CFLAGS) $(LDFLAGS) $< -o $@
 

@@ -96,7 +96,6 @@ void wm_event_destroynotify(wm_t *wm, XEvent *ev);
 void wm_event_expose(wm_t *wm, XEvent *ev);
 void wm_event_unknown(wm_t *wm, XEvent *ev);
 
-#define EVENT_WINDOW_ADD 1
 void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback);
 void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent *ev);
 

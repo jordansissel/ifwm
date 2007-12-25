@@ -11,16 +11,13 @@ clean:
 
 CFLAGS+=-g
 
-test.c: tsawm.h
+test.o: tsawm.h
 
 %.o: %.c
 	gcc $(CFLAGS) -c -o $@  $<
 
-wmlib/wmlib.o: wmlib/wmlib.c
+wmlib/wmlib.o: wmlib/wmlib.c wmlib/wmlib.h
 	make -C wmlib wmlib.o
-
-wmlib/event_list.o: wmlib/event_list.c
-	make -C wmlib event_list.o
 
 test: test.o wmlib/wmlib.o 
 	gcc $(LDFLAGS) -o $@  test.o wmlib/wmlib.o 

@@ -51,7 +51,8 @@ int main(int argc, char **argv) {
   wm_listener_add(wm, WM_EVENT_MAPREQUEST, addwin);
   wm_listener_add(wm, WM_EVENT_ENTERNOTIFY, focus_container);
   wm_listener_add(wm, WM_EVENT_EXPOSE, expose_container);
-  wm_listener_add(wm, WM_EVENT_KEYDOWN, keypress);
+  wm_listener_add(wm, WM_EVENT_KEYDOWN, keydown);
+  wm_listener_add(wm, WM_EVENT_KEYUP, keyup);
 
   /* Start main loop. At this point, our code will only execute when events
    * happen */
@@ -202,30 +203,33 @@ Bool expose_container(wm_t *wm, wm_event_t *event) {
   return True;
 }
 
-Bool keypress(wm_t *wm, wm_event_t *event) {
+Bool keydown(wm_t *wm, wm_event_t *event) {
   XKeyEvent kev = event->xevent->xkey;
   KeySym sym;
 
-  XUngrabServer(wm->dpy);
-  XFlush(wm->dpy);
   wm_log(wm, LOG_INFO, "%s", __func__);
   sym = XKeycodeToKeysym(wm->dpy, kev.keycode, 0);
   wm_log(wm, LOG_INFO, "%s: key %d / %d", __func__, sym, XK_j);
   if (kev.state == Mod1Mask) {
     switch (sym) {
       case XK_j:
-        //container_split_vertical(current_container);
+        container_split_vertical(current_container);
         break;
       case XK_h:
-        //container_split_horizontal(current_container);
+        container_split_horizontal(current_container);
         break;
       default:
         wm_log(wm, LOG_WARN, "%s: unexpected keysym %d", __func__, sym);
     }
   }
+  XUngrabServer(wm->dpy);
   return True;
 }
 
+Bool keyup(wm_t *wm, wm_event_t *event) {
+  XUngrabServer(wm->dpy);
+  return True;
+}
 
 Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height) {
   Window frame;
@@ -276,12 +280,10 @@ Bool container_focus(container_t *container) {
 
   XQueryTree(container->wm->dpy, container->frame, &dummy, &dummy, &children, &nchildren);
   wm_log(container->wm, LOG_INFO, "%s: num children of container: %ud", __func__, nchildren);
-  ret = XSetInputFocus(container->wm->dpy, container->frame, RevertToParent, CurrentTime);
-  printf("OMG: %d\n", ret);
+  XSetInputFocus(container->wm->dpy, container->frame, RevertToParent, CurrentTime);
   if (nchildren > 0) {
-    ret = XSetInputFocus(container->wm->dpy, children[nchildren - 1], RevertToParent, CurrentTime);
-    printf("OMG: %d\n", ret);
-
+    XMapRaised(container->wm->dpy, children[nchildren - 1]);
+    XSetInputFocus(container->wm->dpy, children[nchildren - 1], RevertToParent, CurrentTime);
   }
   return True;
 }
@@ -326,7 +328,6 @@ Bool container_split_vertical(container_t *container) {
                                 attr.x, attr.y + height,
                                 width, height);
   container_show(new_container);
-  XFlush(container->wm->dpy);
 
   container_relocate_top_client(container, new_container);
   container_paint(container);
