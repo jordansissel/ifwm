@@ -43,19 +43,20 @@ typedef unsigned int wm_event_id;
 struct wm_event {
   wm_event_id event_id;
   client_t *client;
-  int x;
-  int y;
-  int width;
-  int height;
+  XEvent *xevent;
 };
 
 #define ButtonEventMask ButtonPressMask|ButtonReleaseMask
 #define MouseEventMask ButtonPressMask|ButtonReleaseMask|PointerMotionMask
 
 
-#define WM_EVENT_MIN 2U
+#define WM_EVENT_MIN 1U
 #define WM_EVENT_MAPREQUEST 1U
-#define WM_EVENT_MAX 2U
+#define WM_EVENT_ENTERNOTIFY 2U
+#define WM_EVENT_EXPOSE 3U
+#define WM_EVENT_KEY 4U
+#define WM_EVENT_MOUSE 5U
+#define WM_EVENT_MAX 6U
 
 /* XXX: Check if we have __FUNCTION__ */
 #define __func__ __FUNCTION__
@@ -78,6 +79,7 @@ void wm_map_window(wm_t *wm, Window w);
 void wm_fake_maprequest(wm_t *wm, Window w);
 
 void wm_event_keypress(wm_t *wm, XEvent *ev);
+void wm_event_keyrelease(wm_t *wm, XEvent *ev);
 void wm_event_buttonpress(wm_t *wm, XEvent *ev);
 void wm_event_buttonrelease(wm_t *wm, XEvent *ev);
 void wm_event_configurerequest(wm_t *wm, XEvent *ev);
@@ -90,11 +92,12 @@ void wm_event_leavenotify(wm_t *wm, XEvent *ev);
 void wm_event_propertynotify(wm_t *wm, XEvent *ev);
 void wm_event_unmapnotify(wm_t *wm, XEvent *ev);
 void wm_event_destroynotify(wm_t *wm, XEvent *ev);
+void wm_event_expose(wm_t *wm, XEvent *ev);
 void wm_event_unknown(wm_t *wm, XEvent *ev);
 
 #define EVENT_WINDOW_ADD 1
 void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback);
-void wm_listener_call(wm_t *wm, wm_event_t *event);
+void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent *ev);
 
 void wm_get_mouse_position(wm_t *wm, int *x, int *y, Window window);
 Bool wm_grab_button(wm_t *wm, Window window, unsigned int mask, unsigned int button);

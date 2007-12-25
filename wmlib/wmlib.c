@@ -92,6 +92,7 @@ void wm_x_init_handlers(wm_t *wm) {
     wm->x_event_handlers[i] = wm_event_unknown;
 
   wm->x_event_handlers[KeyPress] = wm_event_keypress;
+  wm->x_event_handlers[KeyRelease] = wm_event_keyrelease;
   wm->x_event_handlers[ButtonPress] = wm_event_buttonpress;
   wm->x_event_handlers[ButtonRelease] = wm_event_buttonrelease;
   wm->x_event_handlers[ConfigureRequest] = wm_event_configurerequest;
@@ -104,6 +105,7 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->x_event_handlers[PropertyNotify] = wm_event_propertynotify;
   wm->x_event_handlers[UnmapNotify] = wm_event_unmapnotify;
   wm->x_event_handlers[DestroyNotify] = wm_event_destroynotify;
+  wm->x_event_handlers[Expose] = wm_event_expose;;
 }
 
 void wm_x_init_windows(wm_t *wm) {
@@ -177,6 +179,11 @@ void wm_event_keypress(wm_t *wm, XEvent *ev) {
   wm_log(wm, LOG_INFO, "%s", __func__);
 }
 
+void wm_event_keyrelease(wm_t *wm, XEvent *ev) {
+  XKeyEvent kev = ev->xkey;
+  wm_log(wm, LOG_INFO, "%s", __func__);
+}
+
 void wm_get_mouse_position(wm_t *wm, int *x, int *y, Window window) {
   Window unused_root, unused_child;
   unsigned int unused_mask;
@@ -209,7 +216,7 @@ void wm_event_buttonpress(wm_t *wm, XEvent *ev) {
     /* Window button event */
     for (;;) {
       XEvent ev;
-      XMaskEvent(wm->dpy, MouseEventMask, &ev);
+      XMaskEvent(wm->dpy, MouseEventMask | ExposureMask, &ev);
       switch (ev.type) {
         case MotionNotify:
           XMoveWindow(wm->dpy, bev.window,
@@ -219,6 +226,9 @@ void wm_event_buttonpress(wm_t *wm, XEvent *ev) {
         case ButtonRelease:
           XUngrabPointer(wm->dpy, CurrentTime);
           return;
+          break;
+        case Expose:
+          wm->x_event_handlers[ev.type](wm, &ev);
           break;
       }
     }
@@ -252,7 +262,7 @@ void wm_event_configurenotify(wm_t *wm, XEvent *ev) {
   XConfigureEvent cev;
   XWindowChanges changes;
   unsigned long valuemask = 0;
-  wm_log(wm, LOG_INFO, "%s: %d reconfigured.", __func__, cev.window);
+  //wm_log(wm, LOG_INFO, "%s: %d reconfigured.", __func__, cev.window);
 
   if (cev.border_width > 0) {
     changes.border_width = 0;
@@ -283,16 +293,7 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
     return;
   }
 
-  { // Call handlers
-    wm_event_t wmev;
-    wmev.event_id = WM_EVENT_MAPREQUEST;
-    wmev.client = c;
-    if (wmev.client == NULL) {
-      wm_log(wm, LOG_ERROR, "could not find client for window '%d'", mrev.window);
-    } else {
-      wm_listener_call(wm, &wmev);
-    }
-  }
+  wm_listener_call(wm, WM_EVENT_MAPREQUEST, c, ev);
   XUngrabServer(wm->dpy);
 }
 
@@ -308,7 +309,11 @@ void wm_event_clientmessage(wm_t *wm, XEvent *ev) {
 
 void wm_event_enternotify(wm_t *wm, XEvent *ev) {
   XEnterWindowEvent ewev = ev->xcrossing;
+  client_t *client;
   wm_log(wm, LOG_INFO, "%s", __func__);
+
+  client = wm_get_client(wm, ewev.window, False);
+  wm_listener_call(wm, WM_EVENT_ENTERNOTIFY, client, ev);
 }
 
 void wm_event_leavenotify(wm_t *wm, XEvent *ev) {
@@ -335,6 +340,15 @@ void wm_event_destroynotify(wm_t *wm, XEvent *ev) {
   XDestroyWindow(wm->dpy, parent);
 }
 
+void wm_event_expose(wm_t *wm, XEvent *ev) {
+  XExposeEvent eev = ev->xexpose;
+  client_t *client;
+
+  wm_log(wm, LOG_INFO, "%s: expose event on window '%d'", __func__, eev.window);
+  client = wm_get_client(wm, eev.window, False);
+  wm_listener_call(wm, WM_EVENT_EXPOSE, client, ev);
+}
+
 void wm_event_unknown(wm_t *wm, XEvent *ev) {
   wm_log(wm, LOG_INFO, "%s: Unknown event type '%d'", __func__, ev->type);
 }
@@ -350,21 +364,27 @@ void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback) {
            "Attempt to register for event '%d' when max event is '%d'",
            event, WM_EVENT_MAX);
   }
-  
+
   wm->listeners[event] = callback;
 }
 
-void wm_listener_call(wm_t *wm, wm_event_t *event) {
-  int i = 0;
+void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent *ev) {
+  wm_event_t event;
   wm_event_handler callback;
 
-  callback = wm->listeners[event->event_id];
+  //wm_log(wm, LOG_ERROR, "could not find client for window '%d'", mrev.window);
+
+  event.event_id = event_id;
+  event.xevent = ev;
+  event.client = client;
+
+  callback = wm->listeners[event_id];
   if (callback == NULL) {
-    wm_log(wm, LOG_INFO, "No callback registered for event %d", event->event_id);
+    wm_log(wm, LOG_INFO, "No callback registered for event %d", event_id);
     return;
   }
   wm_log(wm, LOG_INFO, "Calling func %016tx", callback);
-  callback(wm, event);
+  callback(wm, &event);
 }
 
 void wm_fake_maprequest(wm_t *wm, Window w) {

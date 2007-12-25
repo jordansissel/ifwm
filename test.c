@@ -33,13 +33,22 @@ int main(int argc, char **argv) {
     Window root = wm->screens[i]->root;;
     container_t *root_container;
     XGetWindowAttributes(wm->dpy, root, &attr);
+    //root_container = container_new(wm, root, attr.x, attr.y, attr.width, attr.height / 2);
     root_container = container_new(wm, root, attr.x, attr.y, attr.width, attr.height);
     container_show(root_container);
+    //root_container = container_new(wm, root, attr.x, attr.y + (attr.height / 2), attr.width, attr.height / 2);
+    //container_show(root_container);
     wm_log(wm, LOG_INFO, "Setting current container to %tx", root_container);
     current_container = root_container;
   }
 
+  container_focus(current_container);
   wm_listener_add(wm, WM_EVENT_MAPREQUEST, addwin);
+  wm_listener_add(wm, WM_EVENT_ENTERNOTIFY, focus_container);
+  wm_listener_add(wm, WM_EVENT_EXPOSE, expose_container);
+  wm_listener_add(wm, WM_EVENT_KEY, keypress);
+
+  /* Grab keys */
   wm_main(wm);
 
   return 0;
@@ -47,13 +56,42 @@ int main(int argc, char **argv) {
 
 container_t *container_new(wm_t *wm, Window parent, int x, int y,
                            int width, int height) {
+  XWindowAttributes attr;
   container_t *container;
   container = xmalloc(sizeof(container_t));
   container->context = XUniqueContext();
   container->frame = mkframe(wm, parent, x, y, width, height);
   container->wm = wm;
-  XSaveContext(wm->dpy, container->frame, container_context, NULL);
+  container->focused = False;
+
+  XGetWindowAttributes(wm->dpy, parent, &attr);
+  container->screen = attr.screen;
+
+  container_create_gc(container);
+  XSaveContext(wm->dpy, container->frame, container_context, (XPointer)container);
   return container;
+}
+
+Bool container_create_gc(container_t *container) {
+  unsigned long valuemask;
+  XGCValues gcv;
+  XColor bg_color, fg_color;
+
+  XParseColor(container->wm->dpy, container->screen->cmap, "#000000", &bg_color);
+  XAllocColor(container->wm->dpy, container->screen->cmap, &bg_color);
+
+  XParseColor(container->wm->dpy, container->screen->cmap, "#FFFFFF", &fg_color);
+  XAllocColor(container->wm->dpy, container->screen->cmap, &fg_color);
+  gcv.line_style = LineSolid;
+  gcv.line_width = 1;
+  gcv.fill_style = FillSolid;
+  gcv.background = bg_color.pixel;
+  //gcv.foreground = fg_color.pixel;
+  gcv.foreground = bg_color.pixel;
+  valuemask = (GCLineStyle | GCLineWidth | GCFillStyle \
+               | GCForeground | GCBackground);
+  container->gc = XCreateGC(container->wm->dpy, container->frame, valuemask, &gcv);
+  return True;
 }
 
 Bool container_show(container_t *container) {
@@ -65,11 +103,13 @@ Bool container_show(container_t *container) {
 Bool container_client_add(container_t *container, client_t *client) {
   XWindowAttributes attr;
   int ret;
-  XPointer dummy;
+  container_t *tmp = NULL;
 
-  ret = XFindContext(container->wm->dpy, client->window, container_context, &dummy);
+  ret = XFindContext(container->wm->dpy, client->window, container_context, 
+                     (XPointer*)&tmp);
   if (ret != XCNOENT) {
-    wm_log(container->wm, LOG_INFO, "%s: ignoring attempt to add container as a client", __func__, client->window);
+    //wm_log(container->wm, LOG_INFO, "%s: ignoring attempt to add container as a client: %tx", __func__, client->window, tmp);
+    container_paint(tmp);
     return False;
   }
 
@@ -79,8 +119,22 @@ Bool container_client_add(container_t *container, client_t *client) {
   XReparentWindow(container->wm->dpy, client->window, container->frame, 0, TITLE_HEIGHT);
   XSetWindowBorderWidth(container->wm->dpy, client->window, 0);
   XResizeWindow(container->wm->dpy, client->window, attr.width, attr.height - TITLE_HEIGHT);
+  XSelectInput(container->wm->dpy, client->window, CLIENT_EVENT_MASK);
 
   container_client_show(container, client);
+  container_paint(container);
+  return True;
+}
+
+Bool container_paint(container_t *container) {
+  XWindowAttributes frame_attr;
+
+  wm_log(container->wm, LOG_INFO, "%s: Painting container window %d", __func__, container->frame);
+
+  XGetWindowAttributes(container->wm->dpy, container->frame, &frame_attr);
+  XFillRectangle(container->wm->dpy, container->frame, container->gc,
+                 0, 0, frame_attr.width, frame_attr.height);
+  XFlush(container->wm->dpy);
   return True;
 }
 
@@ -96,31 +150,61 @@ Bool addwin(wm_t *wm, wm_event_t *event) {
   return True;
 }
 
-Bool _addwin(wm_t *wm, wm_event_t *event) {
-  Window new_window;
-  Window frame;
-  wm_log(wm, LOG_INFO, "addwin!");
+Bool focus_container(wm_t *wm, wm_event_t *event) {
+  container_t *container;
+  int ret;
 
-  new_window = event->client->window;
+  wm_log(wm, LOG_INFO, "%s", __func__);
 
-  XGrabServer(wm->dpy);
-  //frame = mkframe(wm, new_window);
-  if (frame == 0)
+  ret = XFindContext(wm->dpy, event->client->window, container_context, 
+                     (XPointer*)&container);
+  if (ret == XCNOENT) {
+    wm_log(wm, LOG_INFO, "no container found for window %d, can't focus.", event->client->window);
     return False;
+  }
 
-  XSetWindowBorderWidth(wm->dpy, new_window, 0);
-  XReparentWindow(wm->dpy, new_window, frame, 0, TITLE_HEIGHT);
-  XMapWindow(wm->dpy, frame);
-  XMapWindow(wm->dpy, new_window);
-  XRaiseWindow(wm->dpy, frame);
-
-  /* XXX: this should be configurable */
-  wm_grab_button(wm, frame, Mod1Mask, AnyButton);
-  XUngrabServer(wm->dpy);
-  XFlush(wm->dpy);
+  container_blur(current_container);
+  container_focus(container);
+  current_container = container;
 
   return True;
 }
+
+Bool expose_container(wm_t *wm, wm_event_t *event) {
+  container_t *container;
+  int ret;
+
+  wm_log(wm, LOG_INFO, "%s", __func__);
+
+  ret = XFindContext(wm->dpy, event->client->window, container_context, 
+                     (XPointer*)&container);
+  if (ret == XCNOENT) {
+    wm_log(wm, LOG_INFO, "no container found for window %d, can't focus.", event->client->window);
+    return False;
+  }
+
+  if (event->xevent->xexpose.count == 0)
+    container_paint(container);
+  return True;
+}
+
+Bool keypress(wm_t *wm, wm_event_t *event) {
+  container_t *container;
+  int ret;
+
+  wm_log(wm, LOG_INFO, "%s", __func__);
+
+  ret = XFindContext(wm->dpy, event->client->window, container_context, 
+                     (XPointer*)&container);
+  if (ret == XCNOENT) {
+    wm_log(wm, LOG_INFO, "no container found for window %d, can't focus.", event->client->window);
+    return False;
+  }
+
+  XKeyEvent kev = event->xevent->xkey;
+  return True;
+}
+
 
 Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height) {
   Window frame;
@@ -150,46 +234,85 @@ Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height) {
                         valuemask,
                         &frame_attr);
   wm_log(wm, LOG_INFO, "%s; Created window %d", __func__, frame);
+
+  XSelectInput(wm->dpy, frame, FRAME_EVENT_MASK);
   return frame;
 }
 
-Window _mkframe(wm_t *wm, Window child) {
-  Window frame;
-  int x, y, width, height;
-  XWindowAttributes child_attr;
-  XSetWindowAttributes frame_attr;
-  unsigned long valuemask;
-  XColor border_color;
 
-  if (!XGetWindowAttributes(wm->dpy, child, &child_attr)) {
-    wm_log(wm, LOG_ERROR, "%s: XGetWindowAttributes failed", __func__);
-    return 0;
+Bool container_blur(container_t *container) {
+  container->focused = False;
+  return True;
+}
+
+Bool container_focus(container_t *container) {
+  Window dummy;
+  Window *children;
+  unsigned int nchildren;
+
+  container->focused = True;
+
+  XQueryTree(container->wm->dpy, container->frame, &dummy, &dummy, &children, &nchildren);
+  wm_log(container->wm, LOG_INFO, "%s: num children of container: %ud", __func__, nchildren);
+  if (nchildren > 0)
+    XSetInputFocus(container->wm->dpy, children[nchildren - 1], RevertToParent, CurrentTime);
+  else
+    XSetInputFocus(container->wm->dpy, container->frame, RevertToParent, CurrentTime);
+
+  return True;
+}
+
+Bool container_split_horizontal(container_t *container) {
+  XWindowAttributes attr;
+  Window *children = NULL;
+  Window dummy;
+  unsigned int nchildren;
+  unsigned int width, height;
+  container_t *new_container;
+
+  wm_log(container->wm, LOG_INFO, "%s: horizontal split", __func__);
+
+  XGetWindowAttributes(container->wm->dpy, container->frame, &attr);
+  width = attr.width / 2;
+  height = attr.height;
+
+  container_moveresize(container, attr.x, attr.y, width, height);
+  new_container = container_new(container->wm, attr.root,
+                                attr.x + width, attr.y,
+                                width, height);
+
+  /* Move the top window on container to new_container */
+  XQueryTree(container->wm->dpy, container->frame, &dummy, &dummy, &children, &nchildren);
+  if (nchildren == 0)
+    return True;
+
+  client_t *client;
+  int ret;
+  ret = XFindContext(container->wm->dpy, children[nchildren - 1],
+                     container->wm->context, (XPointer*)&client);
+  if (ret == XCNOENT) {
+    wm_log(container->wm, LOG_INFO, "%s: XFindContext for top child window of container %d failed?", __func__, container->frame);
+    return False;
   }
+  container_client_add(new_container, client);
+  XFree(children);
+  return True;
+}
 
-  x = child_attr.x;
-  y = child_attr.y;
-  width = child_attr.width;
-  height = child_attr.height + TITLE_HEIGHT;
+Bool container_moveresize(container_t *container, int x, int y, unsigned int width, unsigned int height) {
+  Window *children = NULL;
+  Window dummy;
+  unsigned int nchildren;
+  unsigned int i;
+  XMoveResizeWindow(container->wm->dpy, container->frame, x, y, width, height);
 
-  frame_attr.event_mask = (SubstructureRedirectMask \
-                           | ButtonPressMask | ButtonReleaseMask \
-                           | EnterWindowMask | LeaveWindowMask);
+  XQueryTree(container->wm->dpy, container->frame, &dummy, &dummy, &children, &nchildren);
 
-  XParseColor(wm->dpy, child_attr.screen->cmap, "#999933", &border_color);
-  XAllocColor(wm->dpy, child_attr.screen->cmap, &border_color);
+  for (i = 0; i < nchildren; i++)
+    XResizeWindow(container->wm->dpy, children[i], width, height);
 
-  frame_attr.border_pixel = border_color.pixel;
-
-  valuemask = CWEventMask | CWBorderPixel;
-
-  frame = XCreateWindow(wm->dpy, child_attr.root,
-                        x, y, width, height,
-                        BORDER,
-                        CopyFromParent,
-                        CopyFromParent,
-                        child_attr.visual,
-                        valuemask,
-                        &frame_attr);
-  return frame;
+  if (children != NULL)
+    XFree(children);
+  return True;
 }
 
