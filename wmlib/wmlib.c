@@ -176,12 +176,18 @@ void wm_main(wm_t *wm) {
 
 void wm_event_keypress(wm_t *wm, XEvent *ev) {
   XKeyEvent kev = ev->xkey;
+  client_t *client;
   wm_log(wm, LOG_INFO, "%s", __func__);
+  client = wm_get_client(wm, kev.window, True);
+  wm_listener_call(wm, WM_EVENT_KEY, client, ev);
 }
 
 void wm_event_keyrelease(wm_t *wm, XEvent *ev) {
   XKeyEvent kev = ev->xkey;
+  client_t *client;
   wm_log(wm, LOG_INFO, "%s", __func__);
+  client = wm_get_client(wm, kev.window, True);
+  wm_listener_call(wm, WM_EVENT_KEY, client, ev);
 }
 
 void wm_get_mouse_position(wm_t *wm, int *x, int *y, Window window) {

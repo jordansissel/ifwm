@@ -40,6 +40,11 @@ int main(int argc, char **argv) {
     //container_show(root_container);
     wm_log(wm, LOG_INFO, "Setting current container to %tx", root_container);
     current_container = root_container;
+
+    /* Grab keys */
+    int ret;
+    ret = XGrabKey(wm->dpy, 44, Mod1Mask, root, False, GrabModeAsync, GrabModeAsync);
+    wm_log(wm, LOG_INFO, "GrabKey result: %d", ret);
   }
 
   container_focus(current_container);
@@ -48,7 +53,8 @@ int main(int argc, char **argv) {
   wm_listener_add(wm, WM_EVENT_EXPOSE, expose_container);
   wm_listener_add(wm, WM_EVENT_KEY, keypress);
 
-  /* Grab keys */
+  /* Start main loop. At this point, our code will only execute when events
+   * happen */
   wm_main(wm);
 
   return 0;
@@ -108,8 +114,8 @@ Bool container_client_add(container_t *container, client_t *client) {
   ret = XFindContext(container->wm->dpy, client->window, container_context, 
                      (XPointer*)&tmp);
   if (ret != XCNOENT) {
-    //wm_log(container->wm, LOG_INFO, "%s: ignoring attempt to add container as a client: %tx", __func__, client->window, tmp);
-    container_paint(tmp);
+    wm_log(container->wm, LOG_INFO, "%s: ignoring attempt to add container as a client: %tx", __func__, client->window, tmp);
+    //container_paint(tmp);
     return False;
   }
 
@@ -139,6 +145,7 @@ Bool container_paint(container_t *container) {
 }
 
 Bool container_client_show(container_t *container, client_t *client) {
+  wm_log(container->wm, LOG_INFO, "%s", __func__);
   XMapRaised(container->wm->dpy, client->window);
   XSetInputFocus(container->wm->dpy, client->window, RevertToParent, CurrentTime);
   return True;
@@ -194,14 +201,15 @@ Bool keypress(wm_t *wm, wm_event_t *event) {
 
   wm_log(wm, LOG_INFO, "%s", __func__);
 
-  ret = XFindContext(wm->dpy, event->client->window, container_context, 
-                     (XPointer*)&container);
-  if (ret == XCNOENT) {
-    wm_log(wm, LOG_INFO, "no container found for window %d, can't focus.", event->client->window);
-    return False;
-  }
+  //ret = XFindContext(wm->dpy, event->client->window, container_context, 
+                     //(XPointer*)&container);
+  //////////if (ret == XCNOENT) {
+    //wm_log(wm, LOG_INFO, "no container found for window %d, can't keypress.", event->client->window);
+    //////return False;
+  //}
 
-  XKeyEvent kev = event->xevent->xkey;
+  //XKeyEvent kev = event->xevent->xkey;
+  container_split_horizontal(current_container);
   return True;
 }
 
