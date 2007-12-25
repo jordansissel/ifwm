@@ -468,7 +468,7 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
   int ret;
   ret = XFindContext(wm->dpy, window, wm->context, (XPointer*)&c);
 
-  if (ret == XCNOENT) { /* window not found */
+  if (ret == XCNOENT && create_if_necessary) { /* window not found */
     XWindowAttributes attr;
     XGrabServer(wm->dpy);
     Status ret;
@@ -486,10 +486,7 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
     c->screen = attr.screen;
     memcpy(&(c->attr), &attr, sizeof(XWindowAttributes));
     XSaveContext(wm->dpy, window, wm->context, (XPointer)c);
-    //wm_log(wm, LOG_INFO, "Saveset: %d", window);
-    //XAddToSaveSet(wm->dpy, window);
     XSync(wm->dpy, False);
-    //XUngrabServer(wm->dpy);
   }
 
   return c;

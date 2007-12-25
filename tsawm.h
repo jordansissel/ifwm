@@ -7,10 +7,10 @@
 
 #include "wmlib/wmlib.h"
 
-#define FRAME_EVENT_MASK (ExposureMask | EnterWindowMask | LeaveWindowMask \
-                          | ButtonPressMask | ButtonReleaseMask \
-                          | KeyPressMask | KeyReleaseMask \
-                         )
+#define FRAME_EVENT_MASK (\
+  ExposureMask | EnterWindowMask | LeaveWindowMask \
+  | ButtonPressMask | ButtonReleaseMask \
+  )
 #define CLIENT_EVENT_MASK (EnterWindowMask | LeaveWindowMask)
 
 typedef  struct container {
