@@ -97,6 +97,7 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->x_event_handlers[ConfigureRequest] = wm_event_configurerequest;
   wm->x_event_handlers[ConfigureNotify] = wm_event_configurenotify;
   wm->x_event_handlers[MapRequest] = wm_event_maprequest;
+  wm->x_event_handlers[MapNotify] = wm_event_mapnotify;
   wm->x_event_handlers[ClientMessage] = wm_event_clientmessage;
   wm->x_event_handlers[EnterNotify] = wm_event_enternotify;
   wm->x_event_handlers[LeaveNotify] = wm_event_leavenotify;
@@ -264,7 +265,7 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
   XMapRequestEvent mrev = ev->xmaprequest;
   XWindowAttributes attr;
   client_t *c;
-  wm_log(wm, LOG_INFO, "%s", __func__);
+  wm_log(wm, LOG_INFO, "%s: window %d", __func__, mrev.window);
 
   /* I grab here because everyone else seems to do this */
   XGrabServer(wm->dpy);
@@ -293,6 +294,11 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
     }
   }
   XUngrabServer(wm->dpy);
+}
+
+void wm_event_mapnotify(wm_t *wm, XEvent *ev) {
+  XMapEvent mev = ev->xmap;
+  wm_log(wm, LOG_INFO, "%s: mapnotify %d", __func__, mev.window);
 }
 
 void wm_event_clientmessage(wm_t *wm, XEvent *ev) {
@@ -443,7 +449,7 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
     wm_log(wm, LOG_INFO, "New window: %d", window);
     ret = XGetWindowAttributes(wm->dpy, window, &attr);
     if (attr.class == InputOnly) {
-      wm_log(wm, LOG_INFO, "%s: Window class is InputOnly", __func__);
+      wm_log(wm, LOG_INFO, "%s: Window class is InputOnly, ignoring", __func__);
       return NULL;
     }
     wm_log(wm, LOG_INFO, "ret: %d", ret);

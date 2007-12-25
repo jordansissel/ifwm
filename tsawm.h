@@ -11,6 +11,8 @@ typedef  struct container {
   Window frame;
   XContext context;
   wm_t *wm;
+  client_t *clients;
+  int num_clients;
 } container_t;
 
 Bool addwin(wm_t *wm, wm_event_t *event);
@@ -20,4 +22,5 @@ container_t *container_new(wm_t *wm, Window parent, int x, int y, int width, int
 
 Bool container_show(container_t *container);
 Bool container_client_add(container_t *container, client_t *client);
+Bool container_client_show(container_t *container, client_t *client);
 

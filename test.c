@@ -19,6 +19,7 @@ static void *xmalloc(size_t size) {
 }
 
 container_t *current_container;
+XContext container_context;
 
 int main(int argc, char **argv) {
   wm_t *wm = NULL;
@@ -32,8 +33,7 @@ int main(int argc, char **argv) {
     Window root = wm->screens[i]->root;;
     container_t *root_container;
     XGetWindowAttributes(wm->dpy, root, &attr);
-    root_container = container_new(wm, root, attr.x, attr.y, 
-                                   attr.width, attr.height);
+    root_container = container_new(wm, root, attr.x, attr.y, attr.width, attr.height);
     container_show(root_container);
     wm_log(wm, LOG_INFO, "Setting current container to %tx", root_container);
     current_container = root_container;
@@ -52,6 +52,7 @@ container_t *container_new(wm_t *wm, Window parent, int x, int y,
   container->context = XUniqueContext();
   container->frame = mkframe(wm, parent, x, y, width, height);
   container->wm = wm;
+  XSaveContext(wm->dpy, container->frame, container_context, NULL);
   return container;
 }
 
@@ -63,13 +64,29 @@ Bool container_show(container_t *container) {
 
 Bool container_client_add(container_t *container, client_t *client) {
   XWindowAttributes attr;
+  int ret;
+  XPointer dummy;
+
+  ret = XFindContext(container->wm->dpy, client->window, container_context, &dummy);
+  if (ret != XCNOENT) {
+    wm_log(container->wm, LOG_INFO, "%s: ignoring attempt to add container as a client", __func__, client->window);
+    return False;
+  }
+
   wm_log(container->wm, LOG_INFO, "%s: client add window %d", __func__, client->window);
   XAddToSaveSet(container->wm->dpy, client->window);
   XGetWindowAttributes(container->wm->dpy, container->frame, &attr);
   XReparentWindow(container->wm->dpy, client->window, container->frame, 0, TITLE_HEIGHT);
   XSetWindowBorderWidth(container->wm->dpy, client->window, 0);
   XResizeWindow(container->wm->dpy, client->window, attr.width, attr.height - TITLE_HEIGHT);
+
+  container_client_show(container, client);
+  return True;
+}
+
+Bool container_client_show(container_t *container, client_t *client) {
   XMapRaised(container->wm->dpy, client->window);
+  XSetInputFocus(container->wm->dpy, client->window, RevertToParent, CurrentTime);
   return True;
 }
 
@@ -113,15 +130,14 @@ Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height) {
   XColor border_color;
   Visual *visual;
 
-  frame_attr.event_mask = (SubstructureNotifyMask | SubstructureRedirectMask \
-                           | ButtonPressMask | ButtonReleaseMask \
-                           | EnterWindowMask | LeaveWindowMask);
   XGetWindowAttributes(wm->dpy, parent, &parent_attr);
   visual = parent_attr.screen->root_visual;
 
   XParseColor(wm->dpy, parent_attr.screen->cmap, "#999933", &border_color);
   XAllocColor(wm->dpy, parent_attr.screen->cmap, &border_color);
   frame_attr.border_pixel = border_color.pixel;
+  frame_attr.event_mask = (ButtonPressMask | ButtonReleaseMask \
+                           | EnterWindowMask | LeaveWindowMask);
 
   valuemask = CWEventMask | CWBorderPixel;
 
@@ -155,7 +171,7 @@ Window _mkframe(wm_t *wm, Window child) {
   width = child_attr.width;
   height = child_attr.height + TITLE_HEIGHT;
 
-  frame_attr.event_mask = (SubstructureNotifyMask | SubstructureRedirectMask \
+  frame_attr.event_mask = (SubstructureRedirectMask \
                            | ButtonPressMask | ButtonReleaseMask \
                            | EnterWindowMask | LeaveWindowMask);
 
