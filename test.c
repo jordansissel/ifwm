@@ -145,7 +145,7 @@ Bool container_paint(container_t *container) {
 }
 
 Bool container_client_show(container_t *container, client_t *client) {
-  wm_log(container->wm, LOG_INFO, "%s", __func__);
+  wm_log(container->wm, LOG_INFO, "%s: window %d", __func__, client->window);
   XMapRaised(container->wm->dpy, client->window);
   XSetInputFocus(container->wm->dpy, client->window, RevertToParent, CurrentTime);
   return True;
