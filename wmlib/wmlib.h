@@ -54,9 +54,10 @@ struct wm_event {
 #define WM_EVENT_MAPREQUEST 1U
 #define WM_EVENT_ENTERNOTIFY 2U
 #define WM_EVENT_EXPOSE 3U
-#define WM_EVENT_KEY 4U
-#define WM_EVENT_MOUSE 5U
-#define WM_EVENT_MAX 6U
+#define WM_EVENT_KEYDOWN 4U
+#define WM_EVENT_KEYUP 5U
+#define WM_EVENT_MOUSE 6U
+#define WM_EVENT_MAX 7U
 
 /* XXX: Check if we have __FUNCTION__ */
 #define __func__ __FUNCTION__

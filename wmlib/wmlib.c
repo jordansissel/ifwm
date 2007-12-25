@@ -179,7 +179,7 @@ void wm_event_keypress(wm_t *wm, XEvent *ev) {
   client_t *client;
   wm_log(wm, LOG_INFO, "%s", __func__);
   client = wm_get_client(wm, kev.window, True);
-  wm_listener_call(wm, WM_EVENT_KEY, client, ev);
+  wm_listener_call(wm, WM_EVENT_KEYDOWN, client, ev);
 }
 
 void wm_event_keyrelease(wm_t *wm, XEvent *ev) {
@@ -187,7 +187,7 @@ void wm_event_keyrelease(wm_t *wm, XEvent *ev) {
   client_t *client;
   wm_log(wm, LOG_INFO, "%s", __func__);
   client = wm_get_client(wm, kev.window, True);
-  wm_listener_call(wm, WM_EVENT_KEY, client, ev);
+  wm_listener_call(wm, WM_EVENT_KEYUP, client, ev);
 }
 
 void wm_get_mouse_position(wm_t *wm, int *x, int *y, Window window) {
@@ -389,7 +389,7 @@ void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent 
     wm_log(wm, LOG_INFO, "No callback registered for event %d", event_id);
     return;
   }
-  wm_log(wm, LOG_INFO, "Calling func %016tx", callback);
+  //wm_log(wm, LOG_INFO, "Calling func %016tx", callback);
   callback(wm, &event);
 }
 
