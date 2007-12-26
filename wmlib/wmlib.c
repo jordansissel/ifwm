@@ -330,7 +330,7 @@ void wm_event_leavenotify(wm_t *wm, XEvent *ev) {
 
 void wm_event_propertynotify(wm_t *wm, XEvent *ev) {
   XPropertyEvent pev = ev->xproperty;
-  wm_log(wm, LOG_INFO, "%s", __func__);
+  wm_log(wm, LOG_INFO, "%s: window %d changed property atom %d (%s)", __func__, pev.window, pev.atom, (pev.state == PropertyDelete ? "deleted" : "changed"));
 
 }
 
@@ -484,9 +484,8 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
       wm_log(wm, LOG_INFO, "%s: Window class is InputOnly, ignoring", __func__);
       return NULL;
     }
-    wm_log(wm, LOG_INFO, "ret: %d", ret);
-    wm_log(wm, LOG_INFO, "window: %d = %dx%d@%d,%d", 
-           window, attr.width, attr.height, attr.x, attr.y);
+    //wm_log(wm, LOG_INFO, "window: %d = %dx%d@%d,%d", 
+           //window, attr.width, attr.height, attr.x, attr.y);
     c = xmalloc(sizeof(client_t));
     c->window = window;
     c->screen = attr.screen;

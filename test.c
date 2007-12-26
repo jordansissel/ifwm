@@ -6,7 +6,7 @@
 
 #include "tsawm.h"
 
-#define BORDER 1
+#define BORDER 0
 #define TITLE_HEIGHT 15
 
 static void *xmalloc(size_t size) {
@@ -215,10 +215,10 @@ Bool keydown(wm_t *wm, wm_event_t *event) {
   if (kev.state == Mod1Mask) {
     switch (sym) {
       case XK_j:
-        container_split_vertical(current_container);
+        container_split(current_container, SPLIT_VERTICAL);
         break;
       case XK_h:
-        container_split_horizontal(current_container);
+        container_split(current_container, SPLIT_HORIZONTAL);
         break;
       default:
         wm_log(wm, LOG_WARN, "%s: unexpected keysym %d", __func__, sym);
@@ -258,7 +258,7 @@ Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height) {
   valuemask = CWEventMask | CWBorderPixel;
 
   frame = XCreateWindow(wm->dpy, parent,
-                        x, y, width - (BORDER * 2), height - (BORDER * 2),
+                        x, y, width, height,
                         BORDER, CopyFromParent, CopyFromParent,
                         visual, valuemask, &frame_attr);
   wm_log(wm, LOG_INFO, "%s; Created window %d", __func__, frame);
@@ -293,44 +293,30 @@ Bool container_focus(container_t *container) {
 
 Bool container_split(container_t *container, unsigned int split_type) {
   XWindowAttributes attr;
+  int new_x, new_y;
   unsigned int width, height;
   container_t *new_container;
 
   wm_log(container->wm, LOG_INFO, "%s: horizontal split", __func__);
 
   XGetWindowAttributes(container->wm->dpy, container->frame, &attr);
-  width = attr.width / 2;
-  height = attr.height;
+  if (split_type == SPLIT_VERTICAL) {
+    width = attr.width / 2;
+    height = attr.height;
+    new_x = attr.x + width;
+    new_y = attr.y;
+  } else { /* SPLIT_HORIZONTAL */
+    width = attr.width;
+    height = attr.height / 2;
+    new_x = attr.x;
+    new_y = attr.y + height;
+  }
 
   container_moveresize(container, attr.x, attr.y, width, height);
   new_container = container_new(container->wm, attr.root,
-                                attr.x + width + 1, attr.y,
-                                width, height);
+                                new_x, new_y, width, height);
   container_show(new_container);
   XFlush(container->wm->dpy);
-
-  container_relocate_top_client(container, new_container);
-  container_paint(container);
-  container_paint(new_container);
-  return True;
-}
-
-Bool container_split_vertical(container_t *container) {
-  XWindowAttributes attr;
-  unsigned int width, height;
-  container_t *new_container;
-
-  wm_log(container->wm, LOG_INFO, "%s: horizontal split", __func__);
-
-  XGetWindowAttributes(container->wm->dpy, container->frame, &attr);
-  width = attr.width;
-  height = attr.height / 2;
-
-  container_moveresize(container, attr.x, attr.y, width, height);
-  new_container = container_new(container->wm, attr.root,
-                                attr.x, attr.y + height,
-                                width, height);
-  container_show(new_container);
 
   container_relocate_top_client(container, new_container);
   container_paint(container);
