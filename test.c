@@ -1,6 +1,8 @@
+#include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "tsawm.h"
 
@@ -222,6 +224,11 @@ Bool keydown(wm_t *wm, wm_event_t *event) {
         wm_log(wm, LOG_WARN, "%s: unexpected keysym %d", __func__, sym);
     }
   }
+  switch (sym) {
+    case XK_Return:
+      run("xterm -bg black -fg white");
+      break;
+  }
   XUngrabServer(wm->dpy);
   return True;
 }
@@ -251,13 +258,9 @@ Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height) {
   valuemask = CWEventMask | CWBorderPixel;
 
   frame = XCreateWindow(wm->dpy, parent,
-                        x, y, width, height,
-                        BORDER,
-                        CopyFromParent,
-                        CopyFromParent,
-                        visual,
-                        valuemask,
-                        &frame_attr);
+                        x, y, width - (BORDER * 2), height - (BORDER * 2),
+                        BORDER, CopyFromParent, CopyFromParent,
+                        visual, valuemask, &frame_attr);
   wm_log(wm, LOG_INFO, "%s; Created window %d", __func__, frame);
 
   XSelectInput(wm->dpy, frame, FRAME_EVENT_MASK);
@@ -274,7 +277,7 @@ Bool container_focus(container_t *container) {
   Window dummy;
   Window *children;
   unsigned int nchildren;
-  int ret;
+  //int ret;
 
   container->focused = True;
 
@@ -288,7 +291,7 @@ Bool container_focus(container_t *container) {
   return True;
 }
 
-Bool container_split_horizontal(container_t *container) {
+Bool container_split(container_t *container, unsigned int split_type) {
   XWindowAttributes attr;
   unsigned int width, height;
   container_t *new_container;
@@ -301,7 +304,7 @@ Bool container_split_horizontal(container_t *container) {
 
   container_moveresize(container, attr.x, attr.y, width, height);
   new_container = container_new(container->wm, attr.root,
-                                attr.x + width, attr.y,
+                                attr.x + width + 1, attr.y,
                                 width, height);
   container_show(new_container);
   XFlush(container->wm->dpy);
@@ -371,5 +374,18 @@ Bool container_moveresize(container_t *container, int x, int y, unsigned int wid
 
   if (children != NULL)
     XFree(children);
+  return True;
+}
+
+Bool run(const char *cmd) {
+  char *args[4];
+  args[0] = "/bin/sh";
+  args[1] = "-c";
+  args[2] = (char *)cmd;
+  args[3] = NULL;
+
+  if (fork() == 0)
+    execvp(args[0], args);
+
   return True;
 }

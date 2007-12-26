@@ -33,6 +33,7 @@ Bool focus_container(wm_t *wm, wm_event_t *event);
 Bool expose_container(wm_t *wm, wm_event_t *event);
 Bool keydown(wm_t *wm, wm_event_t *event);
 Bool keyup(wm_t *wm, wm_event_t *event);
+Bool run(const char *cmd);
 
 Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height);
 
