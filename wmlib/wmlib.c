@@ -280,33 +280,37 @@ void wm_event_configurenotify(wm_t *wm, XEvent *ev) {
 void wm_event_maprequest(wm_t *wm, XEvent *ev) {
   XMapRequestEvent mrev = ev->xmaprequest;
   XWindowAttributes attr;
-  client_t *c;
+  client_t *client;
   wm_log(wm, LOG_INFO, "%s: window %d", __func__, mrev.window);
 
   /* I grab here because everyone else seems to do this */
   XGrabServer(wm->dpy);
 
-  c = wm_get_client(wm, mrev.window, True);
+  client = wm_get_client(wm, mrev.window, True);
+  client->flags |= CLIENT_VISIBLE;
 
-  if (c == NULL)
+  if (client == NULL)
     return;
 
-  if (c->attr.override_redirect) {
+  if (client->attr.override_redirect) {
     wm_log(wm, LOG_INFO, "%s: skipping window %d, override_redirect is set",
            __func__, mrev.window);
-    XMapWindow(wm->dpy, c->window);
+    XMapWindow(wm->dpy, client->window);
     XUngrabServer(wm->dpy);
     return;
   }
 
-  wm_listener_call(wm, WM_EVENT_MAPREQUEST, c, ev);
+  wm_listener_call(wm, WM_EVENT_MAPREQUEST, client, ev);
   XUngrabServer(wm->dpy);
 }
 
 void wm_event_mapnotify(wm_t *wm, XEvent *ev) {
   XMapEvent mev = ev->xmap;
+  client_t *client;
   wm_log(wm, LOG_INFO, "%s: mapnotify %d", __func__, mev.window);
-  wm_get_client(wm, mev.window, True);
+  client = wm_get_client(wm, mev.window, True);
+  client->flags |= CLIENT_VISIBLE;
+  wm_listener_call(wm, WM_EVENT_MAPNOTIFY, client, ev);
 }
 
 void wm_event_clientmessage(wm_t *wm, XEvent *ev) {
@@ -336,7 +340,17 @@ void wm_event_propertynotify(wm_t *wm, XEvent *ev) {
 
 void wm_event_unmapnotify(wm_t *wm, XEvent *ev) {
   XUnmapEvent uev = ev->xunmap;
+  client_t *client;
+
+  /* Ignore unmaps of subwindows for our clients */
+  if (uev.event != uev.window)
+    return;
   wm_log(wm, LOG_INFO, "%s: Unmap %d", __func__, uev.window);
+  client = wm_get_client(wm, uev.window, False);
+
+  client->flags &= ~(CLIENT_VISIBLE);
+  wm_listener_call(wm, WM_EVENT_UNMAPNOTIFY, client, ev);
+  wm_remove_client(wm, client);
 }
 
 void wm_event_destroynotify(wm_t *wm, XEvent *ev) {
@@ -344,20 +358,20 @@ void wm_event_destroynotify(wm_t *wm, XEvent *ev) {
   Window parent = dev.event;
   wm_log(wm, LOG_INFO, "%s: Window %d/%d was destroyed.", __func__, dev.event, dev.window);
 
-  XDestroyWindow(wm->dpy, parent);
+  //XDestroyWindow(wm->dpy, parent);
 }
 
 void wm_event_expose(wm_t *wm, XEvent *ev) {
   XExposeEvent eev = ev->xexpose;
   client_t *client;
 
-  wm_log(wm, LOG_INFO, "%s: expose event on window '%d'", __func__, eev.window);
+  //wm_log(wm, LOG_INFO, "%s: expose event on window '%d'", __func__, eev.window);
   client = wm_get_client(wm, eev.window, False);
   wm_listener_call(wm, WM_EVENT_EXPOSE, client, ev);
 }
 
 void wm_event_unknown(wm_t *wm, XEvent *ev) {
-  wm_log(wm, LOG_INFO, "%s: Unknown event type '%d'", __func__, ev->type);
+  //wm_log(wm, LOG_INFO, "%s: Unknown event type '%d'", __func__, ev->type);
 }
 
 void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback) {
@@ -393,6 +407,14 @@ void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent 
   callback = wm->listeners[event_id];
   if (callback == NULL) {
     wm_log(wm, LOG_INFO, "No callback registered for event %d", event_id);
+    switch (event_id) {
+      case ButtonPress:
+      case ButtonRelease:
+      case KeyPress:
+      case KeyRelease:
+        XUngrabServer(wm->dpy);
+        break;
+    }
     return;
   }
   //wm_log(wm, LOG_INFO, "Calling func %016tx", callback);
@@ -401,8 +423,14 @@ void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent 
 
 void wm_fake_maprequest(wm_t *wm, Window w) {
   XEvent e;
-  e.xmaprequest.window = w;
-  wm_event_maprequest(wm, &e);
+  XWindowAttributes attr;
+
+  XGetWindowAttributes(wm->dpy, w, &attr);
+  if (attr.map_state == IsViewable) {
+    e.xmap.window = w;
+    wm_log(wm, LOG_INFO, "fake map for: %d", w);
+    wm_event_maprequest(wm, &e);
+  }
 }
 
 Bool wm_grab_button(wm_t *wm, Window window, unsigned int mask, unsigned int button) {
@@ -478,7 +506,7 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
     XWindowAttributes attr;
     XGrabServer(wm->dpy);
     Status ret;
-    wm_log(wm, LOG_INFO, "New window: %d", window);
+    wm_log(wm, LOG_INFO, "New client window: %d", window);
     ret = XGetWindowAttributes(wm->dpy, window, &attr);
     if (attr.class == InputOnly) {
       wm_log(wm, LOG_INFO, "%s: Window class is InputOnly, ignoring", __func__);
@@ -487,8 +515,10 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
     //wm_log(wm, LOG_INFO, "window: %d = %dx%d@%d,%d", 
            //window, attr.width, attr.height, attr.x, attr.y);
     c = xmalloc(sizeof(client_t));
+    memset(c, 0, sizeof(client_t));
     c->window = window;
     c->screen = attr.screen;
+    c->flags = 0;
     memcpy(&(c->attr), &attr, sizeof(XWindowAttributes));
     XSaveContext(wm->dpy, window, wm->context, (XPointer)c);
     XSync(wm->dpy, False);
@@ -496,4 +526,9 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
 
   return c;
 }
+
+void wm_remove_client(wm_t *wm, client_t *client) {
+  XDeleteContext(wm->dpy, client->window, wm->context);
+}
+
 

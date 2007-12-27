@@ -51,6 +51,8 @@ int main(int argc, char **argv) {
 
   container_focus(current_container);
   wm_listener_add(wm, WM_EVENT_MAPREQUEST, addwin);
+  wm_listener_add(wm, WM_EVENT_MAPNOTIFY, addwin);
+  wm_listener_add(wm, WM_EVENT_UNMAPNOTIFY, unmap);
   wm_listener_add(wm, WM_EVENT_ENTERNOTIFY, focus_container);
   wm_listener_add(wm, WM_EVENT_EXPOSE, expose_container);
   wm_listener_add(wm, WM_EVENT_KEYDOWN, keydown);
@@ -58,6 +60,7 @@ int main(int argc, char **argv) {
 
   /* Start main loop. At this point, our code will only execute when events
    * happen */
+  XSync(wm->dpy, False);
   wm_main(wm);
 
   return 0;
@@ -70,6 +73,7 @@ container_t *container_new(wm_t *wm, Window parent, int x, int y,
   container = xmalloc(sizeof(container_t));
   container->context = XUniqueContext();
   container->frame = mkframe(wm, parent, x, y, width, height);
+  container->title = mktitle(wm, parent, x, y, width, height);
   container->wm = wm;
   container->focused = False;
 
@@ -104,7 +108,10 @@ Bool container_create_gc(container_t *container) {
 }
 
 Bool container_show(container_t *container) {
+  XEvent ev;
   XMapWindow(container->wm->dpy, container->frame);
+  XCheckTypedWindowEvent(container->wm->dpy, container->frame, MapNotify, &ev);
+  container_paint(container);
   wm_log(container->wm, LOG_INFO, "%s: finished waiting for map event", __func__);
   XFlush(container->wm->dpy);
   return True;
@@ -115,12 +122,18 @@ Bool container_client_add(container_t *container, client_t *client) {
   int ret;
   container_t *tmp = NULL;
 
-  ret = XFindContext(container->wm->dpy, client->window, container_context, 
+  ret = XFindContext(container->wm->dpy, client->window, container_context,
                      (XPointer*)&tmp);
-  wm_log(container->wm, LOG_INFO, "CLIENT ADD FINDCONTEXT: %d", ret);
   if (ret != XCNOENT) {
     wm_log(container->wm, LOG_INFO, "%s: ignoring attempt to add container as a client: %d", __func__, client->window);
-    //container_paint(tmp);
+    return False;
+  }
+
+  /* Ignore the add if this window already belongs to a container */
+  ret = XFindContext(container->wm->dpy, client->window, client_container_context,
+                     (XPointer*)&tmp);
+  if (ret != XCNOENT) {
+    wm_log(container->wm, LOG_INFO, "%s: window %d already in a container, ignoring mapnotify", __func__, client->window);
     return False;
   }
 
@@ -133,7 +146,7 @@ Bool container_client_add(container_t *container, client_t *client) {
   XResizeWindow(container->wm->dpy, client->window, attr.width, attr.height - TITLE_HEIGHT);
   XSaveContext(container->wm->dpy, client->window, client_container_context, (XPointer)container);
 
-  container_paint(container);
+  //container_paint(container);
   container_client_show(container, client);
   return True;
 }
@@ -159,6 +172,7 @@ Bool container_client_show(container_t *container, client_t *client) {
 
 Bool addwin(wm_t *wm, wm_event_t *event) {
   container_client_add(current_container, event->client);
+  XMapWindow(wm->dpy, event->client->window);
   return True;
 }
 
@@ -180,6 +194,10 @@ Bool focus_container(wm_t *wm, wm_event_t *event) {
     }
   }
 
+  if (current_container == container) {
+    //wm_log(wm, LOG_INFO, "%s: ignoring attempt to focus and blur the same container at the same time.", __func__);
+    //return True;
+  }
   container_blur(current_container);
   current_container = container;
   container_focus(container);
@@ -191,7 +209,7 @@ Bool expose_container(wm_t *wm, wm_event_t *event) {
   container_t *container;
   int ret;
 
-  wm_log(wm, LOG_INFO, "%s!!!", __func__);
+  //wm_log(wm, LOG_INFO, "%s!!!", __func__);
 
   ret = XFindContext(wm->dpy, event->client->window, container_context, 
                      (XPointer*)&container);
@@ -235,6 +253,22 @@ Bool keydown(wm_t *wm, wm_event_t *event) {
 
 Bool keyup(wm_t *wm, wm_event_t *event) {
   XUngrabServer(wm->dpy);
+  return True;
+}
+
+Bool unmap(wm_t *wm, wm_event_t *event) {
+  client_t *client = event->client;
+  container_t *container = NULL;
+  wm_log(wm, LOG_INFO, "%s; unmap on %d", __func__, client->window);
+  XFindContext(wm->dpy, client->window, client_container_context, (XPointer *)&container);
+  XDeleteContext(wm->dpy, client->window, client_container_context);
+  if (container != NULL) {
+    wm_log(wm, LOG_INFO, "%s; unmap window", __func__);
+  }
+
+  //XGrabServer(wm->dpy);
+  //XReparentWindow(wm->dpy, client->window, client->screen->root, 0, 0);
+  //XUngrabServer(wm->dpy);
   return True;
 }
 
@@ -285,8 +319,18 @@ Bool container_focus(container_t *container) {
   wm_log(container->wm, LOG_INFO, "%s: num children of container: %ud", __func__, nchildren);
   XSetInputFocus(container->wm->dpy, container->frame, RevertToParent, CurrentTime);
   if (nchildren > 0) {
-    XMapRaised(container->wm->dpy, children[nchildren - 1]);
-    XSetInputFocus(container->wm->dpy, children[nchildren - 1], RevertToParent, CurrentTime);
+    client_t *client = NULL;
+    int i = 1;
+    for (i = nchildren - 1; i >= 0; i--) {
+      client = wm_get_client(container->wm, children[i], False);
+      wm_log(container->wm, LOG_INFO, "%s: child[%d] = %d", __func__, i, client->window);
+      if (client != NULL && client->flags & CLIENT_VISIBLE)
+        break;
+    }
+    if (client != NULL) {
+      XMapRaised(container->wm->dpy, client->window);
+      XSetInputFocus(container->wm->dpy, client->window, RevertToParent, CurrentTime);
+    }
   }
   return True;
 }

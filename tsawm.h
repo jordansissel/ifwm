@@ -16,6 +16,7 @@
   | ButtonPressMask | ButtonReleaseMask \
   )
   //| StructureNotifyMask | SubstructureRedirectMask 
+
 #define CLIENT_EVENT_MASK (\
   EnterWindowMask | LeaveWindowMask | PropertyChangeMask \
   | ColormapChangeMask | FocusChangeMask | StructureNotifyMask \
@@ -34,11 +35,13 @@ typedef  struct container {
 
 
 /* wmlib event handlers */
+Bool maprequest(wm_t *wm, wm_event_t *event);
 Bool addwin(wm_t *wm, wm_event_t *event);
 Bool focus_container(wm_t *wm, wm_event_t *event);
 Bool expose_container(wm_t *wm, wm_event_t *event);
 Bool keydown(wm_t *wm, wm_event_t *event);
 Bool keyup(wm_t *wm, wm_event_t *event);
+Bool unmap(wm_t *wm, wm_event_t *event);
 Bool run(const char *cmd);
 
 Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height);

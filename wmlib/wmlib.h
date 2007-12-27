@@ -37,6 +37,7 @@ typedef struct client {
   Window window;
   XWindowAttributes attr;
   Screen *screen;
+  unsigned int flags;
 } client_t;
 
 typedef unsigned int wm_event_id;
@@ -50,14 +51,20 @@ struct wm_event {
 #define MouseEventMask ButtonPressMask|ButtonReleaseMask|PointerMotionMask
 
 
+// :'<,'>!sort | awk '{print $1, $2, NR"U"}'
 #define WM_EVENT_MIN 1U
-#define WM_EVENT_MAPREQUEST 1U
-#define WM_EVENT_ENTERNOTIFY 2U
-#define WM_EVENT_EXPOSE 3U
-#define WM_EVENT_KEYDOWN 4U
-#define WM_EVENT_KEYUP 5U
-#define WM_EVENT_MOUSE 6U
-#define WM_EVENT_MAX 7U
+#define WM_EVENT_ENTERNOTIFY 1U
+#define WM_EVENT_EXPOSE 2U
+#define WM_EVENT_KEYDOWN 3U
+#define WM_EVENT_KEYUP 4U
+#define WM_EVENT_MAPNOTIFY 5U
+#define WM_EVENT_MAPREQUEST 6U
+#define WM_EVENT_MOUSE 7U
+#define WM_EVENT_UNMAPNOTIFY 8U
+#define WM_EVENT_MAX 9U
+
+/* Client flags */
+#define CLIENT_VISIBLE 1U
 
 /* XXX: Check if we have __FUNCTION__ */
 #define __func__ __FUNCTION__
@@ -102,6 +109,7 @@ void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent 
 void wm_get_mouse_position(wm_t *wm, int *x, int *y, Window window);
 Bool wm_grab_button(wm_t *wm, Window window, unsigned int mask, unsigned int button);
 client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary);
+void wm_remove_client(wm_t *wm, client_t *client);
 
 
 #endif /* WMLIB_H */
