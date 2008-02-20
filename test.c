@@ -73,7 +73,7 @@ container_t *container_new(wm_t *wm, Window parent, int x, int y,
   container = xmalloc(sizeof(container_t));
   container->context = XUniqueContext();
   container->frame = mkframe(wm, parent, x, y, width, height);
-  container->title = mktitle(wm, parent, x, y, width, height);
+  //container->title = mktitle(wm, parent, x, y, width, height);
   container->wm = wm;
   container->focused = False;
 
