@@ -18,8 +18,7 @@ class WMActions(object):
   @staticmethod
   def runcmd(self, cmd):
     print "Running %s" % cmd
-    pid = os.spawnlp(os.P_NOWAIT, "/bin/sh", "/bin/sh", "-c", cmd)
-    print pid
+    os.spawnlp(os.P_NOWAIT, "/bin/sh", "/bin/sh", "-c", cmd)
   
   @staticmethod
   def split_frame(self, wm, horizontal=False, vertical=False):
@@ -52,33 +51,38 @@ class WMActions(object):
 class Container(object):
   """ Window frame container. """
 
-  def __init__(self, parent, x, y, width, height):
+  def __init__(self, wm, parent, x, y, width, height):
     """ Create a Container (for other windows)
-      keyword args are:
-      event_mask = ...
-      colormap = ColorMap or X.CopyFromParent
+      Args:
+        x: x position relative to parent
+        y: y position relative to parent
+        width: width
+        height: height
     """
     self.children = {}
+    self.wm = wm
     self.parent = parent
     self.title_height = 20
     self.border_width = 1
-    self.window_stack = []
+    self.x = x
+    self.y = y
+    self.width = width
+    self.height = height
+
+    self.calculate_client_area()
+
+    self.client_stack = []
 
     mask = (X.ButtonPressMask | X.ButtonReleaseMask 
             | X.EnterWindowMask | X.LeaveWindowMask
             | X.KeyPressMask | X.KeyReleaseMask
             | X.ExposureMask)
-    (self.x, self.y) = (x, y)
 
-    self.width = self.trim_border(width)
-    self.height = self.trim_border(height)
     self.colormap = parent.get_attributes().colormap
 
     self.pixel_border = self.colormap.alloc_named_color("#FFFF00")
     self.pixel_bg = self.colormap.alloc_color(0,0,0)
 
-    #self.gc_bg = parent.create_gc(foreground=self.pixel_bg.pixel, line_width=1, 
-                                  #fill_style=X.FillSolid, line_style=X.LineSolid)
     self.window = parent.create_window(x, y, self.width, self.height, self.border_width,
                                        X.CopyFromParent, X.InputOutput,
                                        event_mask=mask, border_pixel=self.pixel_border.pixel)
@@ -87,6 +91,11 @@ class Container(object):
     self.gc_title_fg = self.window.create_gc()
     self.gc_title_border = self.window.create_gc()
     self.gc_title_bg = self.window.create_gc()
+    # XXX: Actually tell containers what screen and parent they have.
+    self.title_font = self.wm.display.open_font("fixed")
+
+    title_color = self.wm.display.screen(0).default_colormap.alloc_named_color("white")
+    self.gc_title_font = self.window.create_gc(font=self.title_font, foreground=title_color.pixel)
     self.gc_border = self.window.create_gc()
     self.window.map()
     self.paint()
@@ -94,16 +103,22 @@ class Container(object):
   def trim_border(self, pixels):
     return pixels# - (2 * self.border_width)
 
+  def calculate_client_area(self):
+    self.client_x = self.border_width 
+    self.client_y = self.title_height
+    self.client_width = self.width - (2 * self.border_width)
+    self.client_height = self.height - (2 * self.border_width) - self.title_height
+
   def focus(self):
     self.window.set_input_focus(X.RevertToParent, X.CurrentTime)
-    print "Focused new container"
-    if self.window_stack:
-      print "Focusing window in stack: %r" % self.window_stack[0]
+    #print "Focused new container"
+    if self.client_stack:
+      #print "Focusing window in stack: %r" % self.client_stack[0]
 
       # The onerror here is to remove a window when it's gone bad. Not sure why
       # it happens, perhaps a race.
-      self.window_stack[0].set_input_focus(X.RevertToParent, X.CurrentTime, 
-              onerror = lambda *unused: self.window_stack.pop(0))
+      self.client_stack[0].window.set_input_focus(X.RevertToParent, X.CurrentTime, 
+                                                  onerror = lambda *unused: self.client_stack.pop(0))
 
   def set_graphics(self, **kwds):
     """ Set graphics theme options.
@@ -131,10 +146,14 @@ class Container(object):
     if height is None:
       height = self.height
     print "paint(%d, %d, %d, %d)" % (x, y, width, height)
+
+    # Frame background
     self.window.fill_rectangle(self.gc_frame_bg, x, y, width, height)
-    self.window.fill_rectangle(self.gc_title_bg, x, y, width, self.title_height)
-    self.window.poly_rectangle(self.gc_title_border, x, y, width, self.title_height)
-    #self.window.fill_rectangle(self.gc_bg, 0, 0, self.width, self.height)
+
+    # Title
+    self.window.fill_rectangle(self.gc_title_bg, 0, 0,self.width, self.title_height)
+    self.window.poly_rectangle(self.gc_title_border, [(0, 0, self.width, self.title_height)])
+    self.window.draw_text(self.gc_title_font, 10, 10, "Hello there")
 
   def resize(self, width=0, height=0):
     if width:
@@ -142,36 +161,43 @@ class Container(object):
     if height:
       self.height = self.trim_border(height)
 
+    self.calculate_client_area()
     self.window.configure(width=self.width, height=self.height)
-    for window in self.children:
-      window.configure(width=self.width, height=self.height)
+    for client in self.children:
+      client.window.configure(width=self.client_width, height=self.client_height)
     
-  def add_client(self, window):
-    if window not in self.children:
-      self.children[window] = 1
-    window.unmap()
-    window.change_save_set(X.SetModeInsert)
-    window.reparent(self.window, 0, 0)
-    window.configure(width=self.width,
-                     height=self.height - self.title_height,
-                     y=self.title_height,
-                     border_width=0)
-    window.map()
-    window.set_input_focus(X.RevertToParent, X.CurrentTime)
-    mask = X.EnterWindowMask
-    window.change_attributes(event_mask=mask)
-    if window in self.window_stack:
-      self.window_stack.remove(window)
-    self.window_stack.insert(0, window)
+  def add_client(self, client):
+    if client not in self.children:
+      self.children[client] = 1
+    client.window.unmap()
+    client.window.change_save_set(X.SetModeInsert)
+    client.window.reparent(self.window, self.client_x, self.client_y)
+    client.window.configure(width=self.client_width,
+                           height=self.client_height,
+                           border_width=0)
+    client.window.map()
+    client.window.set_input_focus(X.RevertToParent, X.CurrentTime)
+    mask = X.EnterWindowMask | X.PropertyChangeMask
+    client.window.change_attributes(event_mask=mask)
+    if client in self.client_stack:
+      self.client_stack.remove(client)
+    self.client_stack.insert(0, client)
 
-  def remove_client(self, window):
-    if window in self.children:
-      del self.children[window]
-      if window in self.window_stack:
-        self.window_stack.remove(window)
-    if self.window_stack:
-      window.map()
-      window.set_input_focus(X.RevertToParent, X.CurrentTime)
+  def remove_client(self, client):
+    if client in self.children:
+      del self.children[client]
+      if client in self.client_stack:
+        self.client_stack.remove(client)
+    if self.client_stack:
+      client.map()
+      client.set_input_focus(X.RevertToParent, X.CurrentTime)
+
+class Client(object):
+  def __init__(self, wm, window, screen):
+    self.window = window
+    self.screen = screen
+    self.wm = wm
+    self.title = None
 
 class WindowManager(object):
   maskmap_index = (X.ShiftMask, X.LockMask, X.ControlMask, X.Mod1Mask,
@@ -181,6 +207,7 @@ class WindowManager(object):
     self.display = display.Display(display_name)
     self.screens = {}
     self.containers = {}
+    self.clients = {}
     self.client_container = {}
     self.keybindings = {}
     self.container_stack = []
@@ -205,18 +232,23 @@ class WindowManager(object):
     for num in range(0, self.display.screen_count()):
       screen = self.display.screen(num)
       self.screens[num] = screen
-      self.init_root(screen.root)
+      self.init_root(screen.root, screen)
 
-  def init_root(self, root_win):
+  def init_root(self, root_win, screen):
     mask = (X.SubstructureNotifyMask | X.SubstructureRedirectMask 
             | X.KeyPressMask | X.KeyReleaseMask)
     root_win.change_attributes(event_mask = mask)
     self.add_container(parent=root_win)
 
-    for child in root_win.query_tree().children:
-      if child in self.containers:
+    for window in root_win.query_tree().children:
+      if window in self.containers:
         continue
-      self.container_stack[0].add_client(child)
+      self.add_client(window, screen)
+
+  def add_client(self, window, screen):
+    client = Client(self, window, screen)
+    self.clients[window] = client
+    self.container_stack[0].add_client(client)
 
   def grab_key(self, window, keysym, modifier):
     keycode = self.display.keysym_to_keycode(keysym)
@@ -245,7 +277,7 @@ class WindowManager(object):
     y = kwds.get("y", 0)
     width = kwds.get("width", parent_geom.width)
     height = kwds.get("height", parent_geom.height)
-    container = Container(parent, x, y, width, height)
+    container = Container(self, parent, x, y, width, height)
     self.containers[container.window] = container
     self.container_stack.insert(0, container)
     container.set_graphics()
@@ -262,10 +294,11 @@ class WindowManager(object):
       X.KeyRelease: self.handle_key_release,
       X.EnterNotify: self.handle_enter_notify,
       X.Expose: self.handle_expose,
+      X.PropertyNotify: self.handle_property_notify,
 
       X.ReparentNotify: lambda ev: True, # Ignore
       X.LeaveNotify: lambda ev: True, # Ignore
-      X.ConfigureNotify: lambda ev: True, # Ignore
+      #X.ConfigureNotify: lambda ev: True, # Ignore
       X.CreateNotify: lambda ev: True, # Ignore
     }
 
@@ -277,7 +310,7 @@ class WindowManager(object):
         print "Unhandled event: %r" % ev
 
   def handle_configure_request(self, ev):
-    #print "config request: %r" % ev
+    print "config request: %r" % ev
     data = {}
     for i in ("value_mask", "x", "y", "width", "height"):
       data[i] = getattr(ev, i)
@@ -289,8 +322,12 @@ class WindowManager(object):
     if ev.window in self.client_container:
       self.client_container[ev.window].remove_client(ev.window)
       del self.client_container[ev.window]
-    self.client_container[ev.window] = self.container_stack[0]
-    self.container_stack[0].add_client(ev.window)
+    #print "Mapreq: %r" % ev.window.get_attributes()
+    print ev.window.screen
+    #client = self.clients.get(wv.window, Client(???)
+    #self.client_container[ev.window] = self.container_stack[0]
+    #self.container_stack[0].add_client(ev.window)
+
 
   def handle_map_notify(self, ev):
     #print "Map notify: %r" % ev.window
@@ -301,9 +338,11 @@ class WindowManager(object):
 
   def handle_destroy_notify(self, ev):
     #print "Destroy notify on %r" % ev.window
-    if ev.window in self.client_container:
-      self.client_container[ev.window].remove_client(ev.window)
-      del self.client_container[ev.window]
+    if ev.window in self.clients:
+      del self.clients[ev.window]
+      if ev.window in self.client_container:
+        self.client_container[ev.window].remove_client(ev.window)
+        del self.client_container[ev.window]
     else:
       print "DestroyNotify on window I don't know about: %r" % ev.window
 
@@ -341,6 +380,9 @@ class WindowManager(object):
     if ev.window not in self.containers:
       return
     self.containers[ev.window].paint(x=ev.x, y=ev.y, width=ev.width, height=ev.height)
+
+  def handle_property_notify(self, ev):
+    print ev
 
   def focus_container(self, container):
     self.container_stack.remove(container)
