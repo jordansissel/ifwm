@@ -307,7 +307,8 @@ class WindowManager(object):
       if ev.type in dispatch:
         dispatch[ev.type](ev)
       else:
-        print "Unhandled event: %r" % ev
+        pass
+        #print "Unhandled event: %r" % ev
 
   def handle_configure_request(self, ev):
     print "config request: %r" % ev
@@ -323,11 +324,12 @@ class WindowManager(object):
       self.client_container[ev.window].remove_client(ev.window)
       del self.client_container[ev.window]
     #print "Mapreq: %r" % ev.window.get_attributes()
-    print ev.window.screen
+    #print ev.window.get_attributes()
     #client = self.clients.get(wv.window, Client(???)
+    screen = self.get_screen_of_window(ev.window)
+    self.add_client(ev.window, screen)
     #self.client_container[ev.window] = self.container_stack[0]
     #self.container_stack[0].add_client(ev.window)
-
 
   def handle_map_notify(self, ev):
     #print "Map notify: %r" % ev.window
@@ -382,7 +384,15 @@ class WindowManager(object):
     self.containers[ev.window].paint(x=ev.x, y=ev.y, width=ev.width, height=ev.height)
 
   def handle_property_notify(self, ev):
-    print ev
+    pass
+    #print ev
+
+  def get_screen_of_window(self, window):
+    geom = window.get_geometry()
+    for screen in self.screens.iteritems():
+      print dir(screen)
+      #if screen.root == geom.root:
+        #return screen
 
   def focus_container(self, container):
     self.container_stack.remove(container)
