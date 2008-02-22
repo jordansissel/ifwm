@@ -4,7 +4,7 @@ import os
 import sys
 import time
 
-from Xlib import X, display, Xutil, XK
+from Xlib import X, display, Xutil, XK, Xatom
 from Xlib.protocol import event as xevent
 from Xlib.keysymdef import latin1
 
@@ -153,7 +153,11 @@ class Container(object):
     # Title
     self.window.fill_rectangle(self.gc_title_bg, 0, 0,self.width, self.title_height)
     self.window.poly_rectangle(self.gc_title_border, [(0, 0, self.width, self.title_height)])
-    self.window.draw_text(self.gc_title_font, 10, 10, "Hello there")
+
+    title_text = "<new frame>"
+    if self.client_stack:
+      title_text = self.client_stack[0].title or "<no title yet>"
+    self.window.draw_text(self.gc_title_font, 10, 10, title_text) 
 
   def resize(self, width=0, height=0):
     if width:
@@ -198,6 +202,10 @@ class Client(object):
     self.screen = screen
     self.wm = wm
     self.title = None
+    self.refresh_title()
+
+  def refresh_title(self):
+    self.title = self.window.get_full_property(Xatom.WM_NAME, Xatom.STRING).value
 
 class WindowManager(object):
   maskmap_index = (X.ShiftMask, X.LockMask, X.ControlMask, X.Mod1Mask,
@@ -213,8 +221,16 @@ class WindowManager(object):
     self.container_stack = []
     self.window_container_map = {}
     self.modifier_map = {}
+
     self.init_screens()
     self.init_keyboard()
+
+    self.property_dispatch = {
+      self.display.intern_atom("WM_NAME"): self.update_window_title,
+
+      # Ignore these
+      self.display.intern_atom("WM_ICON_NAME"): lambda ev: True,
+    }
 
   def init_keyboard(self):
     # Ensure we're called after init_screens
@@ -243,12 +259,16 @@ class WindowManager(object):
     for window in root_win.query_tree().children:
       if window in self.containers:
         continue
-      self.add_client(window, screen)
+      self.add_client(window)
 
-  def add_client(self, window, screen):
+  def add_client(self, window):
+    print "Add client: %r" % window
+    screen = self.get_screen_of_window(window)
     client = Client(self, window, screen)
     self.clients[window] = client
     self.container_stack[0].add_client(client)
+    self.client_container[client] = self.container_stack[0]
+    #print "add_client: %r" % self
 
   def grab_key(self, window, keysym, modifier):
     keycode = self.display.keysym_to_keycode(keysym)
@@ -323,23 +343,19 @@ class WindowManager(object):
     if ev.window in self.client_container:
       self.client_container[ev.window].remove_client(ev.window)
       del self.client_container[ev.window]
-    #print "Mapreq: %r" % ev.window.get_attributes()
-    #print ev.window.get_attributes()
-    #client = self.clients.get(wv.window, Client(???)
     screen = self.get_screen_of_window(ev.window)
-    self.add_client(ev.window, screen)
-    #self.client_container[ev.window] = self.container_stack[0]
-    #self.container_stack[0].add_client(ev.window)
+    self.add_client(ev.window)
 
   def handle_map_notify(self, ev):
     #print "Map notify: %r" % ev.window
     pass
 
   def handle_unmap_notify(self, ev):
-    self.handle_destroy_notify(ev)
+    #self.handle_destroy_notify(ev)
+    pass
 
   def handle_destroy_notify(self, ev):
-    #print "Destroy notify on %r" % ev.window
+    print "Destroy notify on %r" % ev.window
     if ev.window in self.clients:
       del self.clients[ev.window]
       if ev.window in self.client_container:
@@ -384,15 +400,16 @@ class WindowManager(object):
     self.containers[ev.window].paint(x=ev.x, y=ev.y, width=ev.width, height=ev.height)
 
   def handle_property_notify(self, ev):
-    pass
-    #print ev
+    if ev.atom in self.property_dispatch:
+      self.property_dispatch[ev.atom](ev)
+    else:
+      print "Unhandled property notify atom %s" % (self.display.get_atom_name(ev.atom))
 
   def get_screen_of_window(self, window):
     geom = window.get_geometry()
-    for screen in self.screens.iteritems():
-      print dir(screen)
-      #if screen.root == geom.root:
-        #return screen
+    for screen in self.screens.itervalues():
+      if screen.root == geom.root:
+        return screen
 
   def focus_container(self, container):
     self.container_stack.remove(container)
@@ -436,6 +453,12 @@ class WindowManager(object):
     #self.keybindings.setdefault(context, {})
     #self.keybindings[context][keybinding] = method
 
+  def update_window_title(self, ev):
+    print "update: %r" % self
+    client = self.clients[ev.window]
+    client.refresh_title()
+    container = self.client_container[client]
+    container.paint()
 
 def main(args):
   wm = WindowManager()
