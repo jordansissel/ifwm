@@ -5,6 +5,7 @@ import sys
 import time
 
 from Xlib import X, display, Xutil, XK, Xatom
+import Xlib.error as xerror
 from Xlib.protocol import event as xevent
 from Xlib.keysymdef import latin1
 
@@ -48,6 +49,57 @@ class WMActions(object):
                      x=new_x, y=new_y, width=new_width, height=new_height)
     print "Split horiz:%d / vert:%d" % (horizontal, vertical)
 
+class TitleWindow(object):
+  def __init__(self, wm, parent):
+    mask = (X.ButtonPressMask | X.ButtonReleaseMask 
+            | X.EnterWindowMask | X.LeaveWindowMask
+            | X.KeyPressMask | X.KeyReleaseMask
+            | X.ExposureMask)
+    self.wm = wm
+    self.parent = parent
+
+    screen = wm.get_screen_of_window(parent)
+
+    self.text = "<new frame>"
+
+    self.width = 1
+    self.height = self.wm.title_font_extents.font_ascent
+    self.window = parent.create_window(-100, -100, self.width, self.height, 0, 
+                                       X.CopyFromParent, X.InputOutput,
+                                       event_mask=mask)
+    self.window.map()
+    self.paint()
+
+  def resize(self, width=None, height=None):
+    if width:
+      self.width = width
+    if height:
+      self.height = height
+    if width or height:
+      self.window.configure(width=self.width, height=self.height)
+    
+  def paint(self, x=0, y=0, width=None, height=None): 
+    self.window.fill_rectangle(self.wm.gc_title_bg,  0, 0,self.width, self.height)
+    self.window.poly_rectangle(self.wm.gc_title_border, [(0, 0, self.width, self.height - 1)])
+
+    text_extents = self.wm.title_font.query_text_extents(self.text)
+    text_width = text_extents.overall_width
+    width_per_char = text_width / len(self.text)
+
+    text = self.text
+    if text_width > self.width:
+      num_chars = (self.width / width_per_char) - 5
+      text_width = int(num_chars * width_per_char)
+      text = self.text[:num_chars] + "..."
+
+    xpos = int((self.width - text_width) / 2)
+    self.window.draw_text(self.wm.gc_title_font, 
+                          xpos, 1 + self.wm.title_font_extents.font_ascent, 
+                          text) 
+
+  def set_text(self, text):
+    self.text = text
+
 class Container(object):
   """ Window frame container. """
 
@@ -60,10 +112,11 @@ class Container(object):
         height: height
     """
     self.children = {}
+    self.title_windows = {}
     self.wm = wm
     self.parent = parent
-    self.title_height = 20
-    self.border_width = 1
+    self.title_height = wm.title_font_extents.font_ascent + 4
+    self.border_width = 0
     self.x = x
     self.y = y
     self.width = width
@@ -71,7 +124,8 @@ class Container(object):
 
     self.calculate_client_area()
 
-    self.client_stack = []
+    self.client_list = []
+    self.current_client = None
 
     mask = (X.ButtonPressMask | X.ButtonReleaseMask 
             | X.EnterWindowMask | X.LeaveWindowMask
@@ -83,27 +137,26 @@ class Container(object):
     self.pixel_border = self.colormap.alloc_named_color("#FFFF00")
     self.pixel_bg = self.colormap.alloc_color(0,0,0)
 
-    self.window = parent.create_window(x, y, self.width, self.height, self.border_width,
+    self.window = parent.create_window(x, y, self.width, self.height, 
+                                       self.border_width,
                                        X.CopyFromParent, X.InputOutput,
-                                       event_mask=mask, border_pixel=self.pixel_border.pixel)
+                                       event_mask=mask, 
+                                       border_pixel=self.pixel_border.pixel)
+
     self.gc_frame_bg = self.window.create_gc()
     self.gc_frame_border= self.window.create_gc()
-    self.gc_title_fg = self.window.create_gc()
-    self.gc_title_border = self.window.create_gc()
-    self.gc_title_bg = self.window.create_gc()
-    # XXX: Actually tell containers what screen and parent they have.
-    self.title_font = self.wm.display.open_font("fixed")
-
-    title_color = self.wm.display.screen(0).default_colormap.alloc_named_color("white")
-    self.gc_title_font = self.window.create_gc(font=self.title_font, foreground=title_color.pixel)
     self.gc_border = self.window.create_gc()
     self.window.map()
     self.paint()
 
   def trim_border(self, pixels):
-    return pixels# - (2 * self.border_width)
+    return pixels # - (2 * self.border_width)
 
   def calculate_client_area(self):
+    self.title_x = self.border_width
+    self.title_y = self.border_width
+    self.title_width = self.width
+    self.title_height = self.title_height
     self.client_x = self.border_width 
     self.client_y = self.title_height
     self.client_width = self.width - (2 * self.border_width)
@@ -112,13 +165,28 @@ class Container(object):
   def focus(self):
     self.window.set_input_focus(X.RevertToParent, X.CurrentTime)
     #print "Focused new container"
-    if self.client_stack:
-      #print "Focusing window in stack: %r" % self.client_stack[0]
+    if self.client_list:
+      #print "Focusing window in stack: %r" % self.client_list[0]
 
       # The onerror here is to remove a window when it's gone bad. Not sure why
       # it happens, perhaps a race.
-      self.client_stack[0].window.set_input_focus(X.RevertToParent, X.CurrentTime, 
-                                                  onerror = lambda *unused: self.client_stack.pop(0))
+      client = self.current_client
+      error_func = lambda *unused: self.remove_client(client)
+      client.window.map(onerror = error_func)
+      client.window.set_input_focus(X.RevertToParent, 
+                                    X.CurrentTime, onerror = error_func)
+
+  def set_current_client(self, client):
+    if client not in self.client_list:
+      print "Attempt to currentify client %r which is not in this container %r" % (client, self)
+      return
+
+    if self.current_client:
+      if self.current_client == client:
+        return
+      self.current_client.window.unmap()
+    self.current_client = client
+    self.focus()
 
   def set_graphics(self, **kwds):
     """ Set graphics theme options.
@@ -145,19 +213,10 @@ class Container(object):
       width = self.width
     if height is None:
       height = self.height
-    print "paint(%d, %d, %d, %d)" % (x, y, width, height)
+    #print "paint(%d, %d, %d, %d)" % (x, y, width, height)
 
     # Frame background
     self.window.fill_rectangle(self.gc_frame_bg, x, y, width, height)
-
-    # Title
-    self.window.fill_rectangle(self.gc_title_bg, 0, 0,self.width, self.title_height)
-    self.window.poly_rectangle(self.gc_title_border, [(0, 0, self.width, self.title_height)])
-
-    title_text = "<new frame>"
-    if self.client_stack:
-      title_text = self.client_stack[0].title or "<no title yet>"
-    self.window.draw_text(self.gc_title_font, 10, 10, title_text) 
 
   def resize(self, width=0, height=0):
     if width:
@@ -169,32 +228,54 @@ class Container(object):
     self.window.configure(width=self.width, height=self.height)
     for client in self.children:
       client.window.configure(width=self.client_width, height=self.client_height)
-    
+    self.reposition_titles()
+      
   def add_client(self, client):
     if client not in self.children:
       self.children[client] = 1
+
+    #client_event_mask = X.DestroyNotify | X.UnmapNotify
     client.window.unmap()
     client.window.change_save_set(X.SetModeInsert)
     client.window.reparent(self.window, self.client_x, self.client_y)
     client.window.configure(width=self.client_width,
                            height=self.client_height,
                            border_width=0)
-    client.window.map()
-    client.window.set_input_focus(X.RevertToParent, X.CurrentTime)
-    mask = X.EnterWindowMask | X.PropertyChangeMask
+    mask= (X.StructureNotifyMask | X.EnterWindowMask 
+           | X.PropertyChangeMask)
     client.window.change_attributes(event_mask=mask)
-    if client in self.client_stack:
-      self.client_stack.remove(client)
-    self.client_stack.insert(0, client)
-
+    if client in self.client_list:
+      self.client_list.remove(client)
+    self.client_list.append(client)
+    self.set_current_client(client)
+    self.reposition_titles()
+    
   def remove_client(self, client):
     if client in self.children:
       del self.children[client]
-      if client in self.client_stack:
-        self.client_stack.remove(client)
-    if self.client_stack:
-      client.map()
-      client.set_input_focus(X.RevertToParent, X.CurrentTime)
+      if client in self.client_list:
+        self.client_list.remove(client)
+    if self.client_list:
+      self.set_current_client(self.client_list[0])
+      #client.window.map()
+      #client.window.set_input_focus(X.RevertToParent, X.CurrentTime)
+    self.reposition_titles()
+
+  def reposition_titles(self):
+    if not self.client_list:
+      return
+
+    title_width = self.width / len(self.client_list)
+    for (index, client) in enumerate(self.client_list):
+      tw = client.title_window
+      xpos = index * title_width
+      print "Positioning client %d in %r at %d" % (index, self, xpos)
+      tw.window.unmap()
+      tw.window.reparent(self.window, xpos, 0)
+      tw.window.map()
+      tw.resize(width=title_width, height=self.title_height)
+      tw.paint()
+      
 
 class Client(object):
   def __init__(self, wm, window, screen):
@@ -202,10 +283,15 @@ class Client(object):
     self.screen = screen
     self.wm = wm
     self.title = None
+    self.title_window = TitleWindow(wm, screen.root)
     self.refresh_title()
 
   def refresh_title(self):
-    self.title = self.window.get_full_property(Xatom.WM_NAME, Xatom.STRING).value
+    data = self.window.get_full_property(Xatom.WM_NAME, Xatom.STRING)
+    if data:
+      self.title = data.value
+      self.title_window.set_text(self.title)
+      self.title_window.paint()
 
 class WindowManager(object):
   maskmap_index = (X.ShiftMask, X.LockMask, X.ControlMask, X.Mod1Mask,
@@ -216,6 +302,7 @@ class WindowManager(object):
     self.screens = {}
     self.containers = {}
     self.clients = {}
+    self.events = {}
     self.client_container = {}
     self.keybindings = {}
     self.container_stack = []
@@ -224,6 +311,9 @@ class WindowManager(object):
 
     self.init_screens()
     self.init_keyboard()
+    self.init_graphics()
+    for screen in self.screens.itervalues():
+      self.init_root(screen.root, screen)
 
     self.property_dispatch = {
       self.display.intern_atom("WM_NAME"): self.update_window_title,
@@ -231,6 +321,19 @@ class WindowManager(object):
       # Ignore these
       self.display.intern_atom("WM_ICON_NAME"): lambda ev: True,
     }
+
+  def init_graphics(self):
+    screen = self.screens[0]
+    white = screen.default_colormap.alloc_named_color("white")
+    black = screen.default_colormap.alloc_named_color("black")
+    root_win = self.screens[0].root
+    self.gc_title_fg = root_win.create_gc(foreground=white.pixel)
+    self.gc_title_border = root_win.create_gc(foreground=white.pixel)
+    self.gc_title_bg = root_win.create_gc(foreground=black.pixel)
+    self.title_font = self.display.open_font("fixed")
+    self.title_font_extents = self.title_font.query_text_extents("M")
+    self.gc_title_font = root_win.create_gc(font=self.title_font, 
+                                            foreground=white.pixel)
 
   def init_keyboard(self):
     # Ensure we're called after init_screens
@@ -248,7 +351,6 @@ class WindowManager(object):
     for num in range(0, self.display.screen_count()):
       screen = self.display.screen(num)
       self.screens[num] = screen
-      self.init_root(screen.root, screen)
 
   def init_root(self, root_win, screen):
     mask = (X.SubstructureNotifyMask | X.SubstructureRedirectMask 
@@ -261,6 +363,11 @@ class WindowManager(object):
         continue
       self.add_client(window)
 
+  def add_event(self, event, window, callback, condition_func=lambda : True):
+    key = (event, window)
+    self.events.setdefault(key, [])
+    self.events[key].append((condition_func, callback))
+
   def add_client(self, window):
     print "Add client: %r" % window
     screen = self.get_screen_of_window(window)
@@ -268,7 +375,26 @@ class WindowManager(object):
     self.clients[window] = client
     self.container_stack[0].add_client(client)
     self.client_container[client] = self.container_stack[0]
-    #print "add_client: %r" % self
+
+    self.add_event(X.ButtonRelease, client.title_window.window,
+                   lambda ev: ev.detail == 1,
+                   lambda ev: self.focus_client(client))
+
+  def focus_client(self, client):
+    if client not in self.client_container:
+      print "Attempt to focus client not in a container?"
+      return
+
+    container = self.client_container[client]
+    container.set_current_client(client)
+
+  def remove_client(self, client):
+    window = client.window
+    if window in self.clients:
+      del self.clients[window]
+    if client in self.client_container:
+      self.client_container[client].remove_client(client)
+      del self.client_container[client]
 
   def grab_key(self, window, keysym, modifier):
     keycode = self.display.keysym_to_keycode(keysym)
@@ -312,11 +438,13 @@ class WindowManager(object):
       X.UnmapNotify: self.handle_unmap_notify,
       X.KeyPress: self.handle_key_press,
       X.KeyRelease: self.handle_key_release,
+      X.ButtonPress: self.handle_button_press,
+      X.ButtonRelease: self.handle_button_release,
       X.EnterNotify: self.handle_enter_notify,
       X.Expose: self.handle_expose,
       X.PropertyNotify: self.handle_property_notify,
 
-      X.ReparentNotify: lambda ev: True, # Ignore
+      #X.ReparentNotify: lambda ev: True, # Ignore
       X.LeaveNotify: lambda ev: True, # Ignore
       #X.ConfigureNotify: lambda ev: True, # Ignore
       X.CreateNotify: lambda ev: True, # Ignore
@@ -327,8 +455,7 @@ class WindowManager(object):
       if ev.type in dispatch:
         dispatch[ev.type](ev)
       else:
-        pass
-        #print "Unhandled event: %r" % ev
+        print "Unhandled event: %r" % ev
 
   def handle_configure_request(self, ev):
     print "config request: %r" % ev
@@ -340,27 +467,22 @@ class WindowManager(object):
 
   def handle_map_request(self, ev):
     print "Map request: %r" % ev.window
-    if ev.window in self.client_container:
-      self.client_container[ev.window].remove_client(ev.window)
-      del self.client_container[ev.window]
+    #if ev.window in self.client_container:
+      #self.client_container[ev.window].remove_client(ev.window)
+      #del self.client_container[ev.window]
     screen = self.get_screen_of_window(ev.window)
     self.add_client(ev.window)
 
   def handle_map_notify(self, ev):
-    #print "Map notify: %r" % ev.window
     pass
 
   def handle_unmap_notify(self, ev):
-    #self.handle_destroy_notify(ev)
     pass
 
   def handle_destroy_notify(self, ev):
     print "Destroy notify on %r" % ev.window
     if ev.window in self.clients:
-      del self.clients[ev.window]
-      if ev.window in self.client_container:
-        self.client_container[ev.window].remove_client(ev.window)
-        del self.client_container[ev.window]
+      self.remove_client(self.clients[ev.window])
     else:
       print "DestroyNotify on window I don't know about: %r" % ev.window
 
@@ -388,6 +510,19 @@ class WindowManager(object):
 
   def handle_key_release(self, ev):
     pass
+
+  def handle_button_press(self, ev):
+    pass
+
+  def handle_button_release(self, ev):
+    self.process_event(ev)
+
+  def process_event(self, ev):
+    key = (ev.type, ev.window)
+    handlers = self.events.get(key, [])
+    for (condition, callback) in handlers:
+      if condition(ev):
+        callback(ev)
 
   def handle_enter_notify(self, ev):
     if ev.window not in self.containers:
@@ -427,7 +562,6 @@ class WindowManager(object):
     mod_list = data[:-1]
     key = data[-1]
     modifier_mask = 0
-    #keysym = getattr(latin1, "XK_%s" % key, None)
     keysym = XK.string_to_keysym(key)
     #print "%s => %s" % (key, keysym)
     if keysym == X.NoSymbol:
@@ -450,25 +584,29 @@ class WindowManager(object):
     keybinding = (context, keysym, modifier_mask)
     print "Registered keystroke '%s' as %r)" % (keystring, keybinding,)
     self.keybindings[keybinding] = method
-    #self.keybindings.setdefault(context, {})
-    #self.keybindings[context][keybinding] = method
 
   def update_window_title(self, ev):
+    if ev.window not in self.clients:
+      return
     print "update: %r" % self
+
     client = self.clients[ev.window]
-    client.refresh_title()
-    container = self.client_container[client]
-    container.paint()
+    try:
+      client.refresh_title()
+      container = self.client_container[client]
+      container.paint()
+    except xerror.BadWindow:
+      self.remove_client(client)
 
 def main(args):
   wm = WindowManager()
   wm.register_keystroke_handler("alt+j", 
-                                lambda : WMActions.split_frame(WMActions, wm, horizontal=True))
+        lambda : WMActions.split_frame(WMActions, wm, horizontal=True))
   wm.register_keystroke_handler("alt+h", 
-                                lambda : WMActions.split_frame(WMActions, wm, vertical=True))
+        lambda : WMActions.split_frame(WMActions, wm, vertical=True))
   wm.register_keystroke_handler("Return", 
-                                lambda : WMActions.runcmd(WMActions, "run-xterm"),
-                                context = WMActions.container_context)
+        lambda : WMActions.runcmd(WMActions, "run-xterm"),
+        context = WMActions.container_context)
   wm.run_forever()
 
 if __name__ == "__main__":

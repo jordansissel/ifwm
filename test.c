@@ -301,6 +301,35 @@ Window mkframe(wm_t *wm, Window parent, int x, int y, int width, int height) {
   return frame;
 }
 
+Window mktitle(wm_t *wm, Window parent, int x, int y, int width, int height) {
+  Window title;
+  XSetWindowAttributes title_attr;
+  XWindowAttributes parent_attr;
+  unsigned long valuemask;
+  XColor border_color;
+  Visual *visual;
+
+  XGetWindowAttributes(wm->dpy, parent, &parent_attr);
+  visual = parent_attr.screen->root_visual;
+
+  XParseColor(wm->dpy, parent_attr.screen->cmap, "#999933", &border_color);
+  XAllocColor(wm->dpy, parent_attr.screen->cmap, &border_color);
+  frame_attr.border_pixel = border_color.pixel;
+  frame_attr.event_mask = (ButtonPressMask | ButtonReleaseMask \
+                           | EnterWindowMask | LeaveWindowMask);
+
+  valuemask = CWEventMask | CWBorderPixel;
+
+  frame = XCreateWindow(wm->dpy, parent,
+                        x, y, width, height,
+                        BORDER, CopyFromParent, CopyFromParent,
+                        visual, valuemask, &frame_attr);
+  wm_log(wm, LOG_INFO, "%s; Created window %d", __func__, frame);
+
+  XSelectInput(wm->dpy, frame, FRAME_EVENT_MASK);
+  return frame;
+}
+
 
 Bool container_blur(container_t *container) {
   container->focused = False;
