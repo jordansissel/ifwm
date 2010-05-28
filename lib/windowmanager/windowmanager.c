@@ -27,7 +27,7 @@
 /* for vasprintf in linux */
 #define _GNU_SOURCE 
 
-#include "wmlib.h"
+#include "windowmanager.h"
 
 #include <stdio.h>
 #include <stdarg.h>

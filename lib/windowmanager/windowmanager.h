@@ -1,6 +1,6 @@
 
-#ifndef WMLIB_H
-#define WMLIB_H
+#ifndef _WINDOWMANAGER_H_
+#define _WINDOWMANAGER_H_
 
 #include <X11/extensions/shape.h>
 #include <X11/keysym.h>
@@ -110,5 +110,4 @@ Bool wm_grab_button(wm_t *wm, Window window, unsigned int mask, unsigned int but
 client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary);
 void wm_remove_client(wm_t *wm, client_t *client);
 
-
-#endif /* WMLIB_H */
+#endif /* _WINDOWMANAGER_H_ */

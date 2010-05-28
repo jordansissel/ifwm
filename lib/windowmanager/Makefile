@@ -9,12 +9,12 @@ all: main
 clean:
 	rm *.o || true
 
-wmlib.o: wmlib.h
+windowmanager.o: windowmanager.h
 
-main: wmlib.o main.o
-	$(CC) $(CFLAGS) -o $@ wmlib.o main.o $(LDFLAGS)
+main: windowmanager.o main.o
+	$(CC) $(CFLAGS) -o $@ windowmanager.o main.o $(LDFLAGS)
 
-wmlib.so: wmlib.o
+windowmanager.so: windowmanager.o
 
 #.o: %.c
 	#$(CC) $(CFLAGS) -c -o $@  $<
