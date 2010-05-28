@@ -1,6 +1,3 @@
-// use bdb
-// store things in an in-memory bdb?
-
 /*
  * provide a "window manager" library.
  * - accept all necessary events
@@ -37,6 +34,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dlfcn.h>
+
+static int wm_x_event_error(Display *dpy, XErrorEvent *ev);
 
 static void *xmalloc(size_t size) {
   void *ptr;
@@ -77,6 +76,7 @@ void wm_x_init_screens(wm_t *wm) {
   wm->num_screens = num_screens;
   wm->screens = xmalloc(num_screens * sizeof(Screen*));
   for (i = 0; i < num_screens; i++) {
+    int ret;
     wm->screens[i] = ScreenOfDisplay(wm->dpy, i);
     XChangeWindowAttributes(wm->dpy, wm->screens[i]->root, CWEventMask, &attr);
     XSelectInput(wm->dpy, wm->screens[i]->root, attr.event_mask);
@@ -84,10 +84,11 @@ void wm_x_init_screens(wm_t *wm) {
 }
 
 void wm_x_init_handlers(wm_t *wm) {
-  /* LASTEvent from X11/X.h is the max event value */
   int i;
   wm->x_event_handlers = xmalloc(LASTEvent * sizeof(x_event_handler));
 
+  /* Default event handler is 'unknown' */
+  /* LASTEvent from X11/X.h is the max event value */
   for (i = 0; i < LASTEvent; i++)
     wm->x_event_handlers[i] = wm_event_unknown;
 
@@ -105,7 +106,15 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->x_event_handlers[PropertyNotify] = wm_event_propertynotify;
   wm->x_event_handlers[UnmapNotify] = wm_event_unmapnotify;
   wm->x_event_handlers[DestroyNotify] = wm_event_destroynotify;
-  wm->x_event_handlers[Expose] = wm_event_expose;;
+  wm->x_event_handlers[Expose] = wm_event_expose;
+
+  /* TODO(sissel): Maintain a mapping of Display* to wm_t* so we can know which wm_t an error
+   * belongs to */
+  XSetErrorHandler(wm_x_event_error);
+}
+
+int wm_x_event_error(Display *dpy, XErrorEvent *ev) {
+  printf("Got an error\n");
 }
 
 void wm_x_init_windows(wm_t *wm) {
@@ -530,5 +539,3 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
 void wm_remove_client(wm_t *wm, client_t *client) {
   XDeleteContext(wm->dpy, client->window, wm->context);
 }
-
-

@@ -2,7 +2,6 @@
 #ifndef WMLIB_H
 #define WMLIB_H
 
-#include <db.h>
 #include <X11/extensions/shape.h>
 #include <X11/keysym.h>
 #include <X11/Xlib.h>
