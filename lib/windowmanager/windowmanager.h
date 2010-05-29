@@ -65,13 +65,12 @@ struct wm_event {
 /* Client flags */
 #define CLIENT_VISIBLE 1U
 
-/* XXX: Check if we have __FUNCTION__ */
+/* TODO(sissel): Check if we have __FUNCTION__, this requires GCC, I think. */
 #define __func__ __FUNCTION__
 
 wm_t *wm_new();
 wm_t *wm_new2(char *display_name);
 
-void wm_init(wm_t *wm);
 void wm_main(wm_t *wm);
 
 Display *wm_x_get_display(wm_t *wm);
