@@ -125,6 +125,7 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->x_event_handlers[ConfigureRequest] = wm_event_configurerequest;
   wm->x_event_handlers[ConfigureNotify] = wm_event_configurenotify;
   wm->x_event_handlers[MapRequest] = wm_event_maprequest;
+  wm->x_event_handlers[CreateNotify] = wm_event_createnotify;
   wm->x_event_handlers[MapNotify] = wm_event_mapnotify;
   wm->x_event_handlers[ClientMessage] = wm_event_clientmessage;
   wm->x_event_handlers[EnterNotify] = wm_event_enternotify;
@@ -314,6 +315,14 @@ void wm_event_configurenotify(wm_t *wm, XEvent *ev) {
   }
 }
 
+void wm_event_createnotify(wm_t *wm, XEvent *ev) {
+  XCreateWindowEvent xcwe = ev->xcreatewindow;
+  wm_log(wm, LOG_INFO, "===> CREATE NOTIFY");
+  XGrabServer(wm->dpy);
+  wm_get_client(wm, xcwe.window, True);
+  XUngrabServer(wm->dpy);
+}
+
 void wm_event_maprequest(wm_t *wm, XEvent *ev) {
   XMapRequestEvent mrev = ev->xmaprequest;
   XWindowAttributes attr;
@@ -337,7 +346,6 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
     return;
   }
 
-  XSelectInput(wm->dpy, mrev.window, ClientWindowMask);
   wm_listener_call(wm, WM_EVENT_WINDOW_MAP_REQUEST, client, ev);
   XUngrabServer(wm->dpy);
 }
@@ -521,7 +529,7 @@ void wm_fake_maprequest(wm_t *wm, Window w) {
   if (attr.map_state == IsViewable /* && attr.class != InputOnly */) {
     e.xmap.window = w;
     wm_log(wm, LOG_INFO, "fake map for: %d", w);
-    wm_event_maprequest(wm, &e);
+    wm_event_createnotify(wm, &e);
   }
 }
 
@@ -597,15 +605,15 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
 
   if (ret == XCNOENT && create_if_necessary) { /* window not found */
     XWindowAttributes attr;
-    //XGrabServer(wm->dpy);
+    XGrabServer(wm->dpy);
     Status ret;
     wm_log(wm, LOG_INFO, "New client window: %d", window);
-    ret = XGetWindowAttributes(wm->dpy, window, &attr);
-    if (attr.class == InputOnly) {
-      wm_log(wm, LOG_INFO, 
-             "%s: Window class is InputOnly, should we ignore this?", __func__);
+    //ret = XGetWindowAttributes(wm->dpy, window, &attr);
+    //if (attr.class == InputOnly) {
+      //wm_log(wm, LOG_INFO, 
+             //"%s: Window class is InputOnly, should we ignore this?", __func__);
       //return NULL;
-    }
+    //}
 
     //wm_log(wm, LOG_INFO, "window: %d = %dx%d@%d,%d", 
            //window, attr.width, attr.height, attr.x, attr.y);
@@ -621,7 +629,9 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
     if (ret != 0) {
       wm_log(wm, LOG_ERROR, "%s: XSaveContext failed.", __func__);
     }
+    XSelectInput(wm->dpy, window, ClientWindowMask);
     XSync(wm->dpy, False);
+    XUngrabServer(wm->dpy);
   }
 
   return c;

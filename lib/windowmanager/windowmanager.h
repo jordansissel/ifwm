@@ -130,6 +130,7 @@ void wm_event_propertynotify(wm_t *wm, XEvent *ev);
 void wm_event_unmapnotify(wm_t *wm, XEvent *ev);
 void wm_event_destroynotify(wm_t *wm, XEvent *ev);
 void wm_event_expose(wm_t *wm, XEvent *ev);
+void wm_event_createnotify(wm_t *wm, XEvent *ev);
 void wm_event_unknown(wm_t *wm, XEvent *ev);
 
 void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler_func callback,
