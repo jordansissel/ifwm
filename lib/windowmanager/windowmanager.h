@@ -68,12 +68,15 @@ struct wm_event {
 /* XXX: Check if we have __FUNCTION__ */
 #define __func__ __FUNCTION__
 
-wm_t *wm_create(char *display_name);
+wm_t *wm_new();
+wm_t *wm_new2(char *display_name);
+
 void wm_init(wm_t *wm);
 void wm_main(wm_t *wm);
 
-int wm_get_log_level(wm_t *wm, int log_level);
+Display *wm_x_get_display(wm_t *wm);
 void wm_log(wm_t *wm, int log_level, char *format, ...);
+int wm_get_log_level(wm_t *wm);
 void wm_set_log_level(wm_t *wm, int log_level);
 
 void wm_x_open(wm_t *wm, char *display_name);
