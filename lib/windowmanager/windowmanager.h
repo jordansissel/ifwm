@@ -1,4 +1,3 @@
-
 #ifndef _WINDOWMANAGER_H_
 #define _WINDOWMANAGER_H_
 
@@ -7,30 +6,41 @@
 #include <X11/Xlib.h>
 #include <X11/Xresource.h>
 #include <X11/Xutil.h>
+#include <glib.h>
+#include <xdo.h>
 
-//include "event_list.h"
-
-#define LOG_FATAL 0
-#define LOG_ERROR 1
-#define LOG_WARN  2
-#define LOG_INFO  3
+enum log_values {
+  LOG_FATAL = 0,
+  LOG_ERROR = 1,
+  LOG_WARN = 2,
+  LOG_INFO = 3
+};
 
 struct wm;
 typedef struct wm wm_t;
 typedef struct wm_event wm_event_t;
 
-typedef void (*x_event_handler)(wm_t *wm, XEvent *ev);
-typedef Bool (*wm_event_handler)(wm_t *wm, wm_event_t *event);
+typedef void (*x_event_handler_func)(wm_t *wm, XEvent *ev);
+typedef Bool (*wm_event_handler_func)(wm_t *wm, wm_event_t *event, gpointer data);
 
 struct wm {
   Display *dpy;
-  int log_level;
+  xdo_t *xdo;
+
   Screen **screens;
   int num_screens;
-  x_event_handler *x_event_handlers;
-  wm_event_handler *listeners;
+
+  int log_level;
+
+  x_event_handler_func *x_event_handlers;
+  GPtrArray **listeners;
   XContext context;
 };
+
+typedef struct wm_event_handler {
+  wm_event_handler_func callback;
+  gpointer data; /* aka 'void *' */
+} wm_event_handler_t;
 
 typedef struct client {
   Window window;
@@ -41,26 +51,44 @@ typedef struct client {
 
 typedef unsigned int wm_event_id;
 struct wm_event {
+  wm_t *wm;
   wm_event_id event_id;
   client_t *client;
   XEvent *xevent;
 };
 
-#define ButtonEventMask ButtonPressMask|ButtonReleaseMask
-#define MouseEventMask ButtonPressMask|ButtonReleaseMask|PointerMotionMask
+#define ButtonEventMask ButtonPressMask | ButtonReleaseMask
+#define MouseEventMask ButtonPressMask | ButtonReleaseMask | PointerMotionMask
+#define ClientWindowMask \
+  (EnterWindowMask | LeaveWindowMask | PropertyChangeMask | StructureNotifyMask)
 
+/* 
+ * Mapping of X11 events to libwindowmanager events:
+ * WM_EVENT_KEY_DOWN => ButtonPress
+ * WM_EVENT_KEY_UP => ButtonRelease
+ * WM_EVENT_WINDOW_ENTER => EnterNotify
+ * WM_EVENT_WINDOW_LEAVE => LeaveNotify
+ * WM_EVENT_WINDOW_MAP => MapNotify
+ * WM_EVENT_WINDOW_UNMAP => UnmapNotify
+ * WM_EVENT_WINDOW_MAP_REQUEST => MapRequest
+ * WM_EVENT_WINDOW_PROPERTY_CHANGE => PropertyNotify with state PropertyNewValue
+ * WM_EVENT_WINDOW_PROPERTY_DELETE => PropertyNotify with state PropertyDelete
+ */
 
-// :'<,'>!sort | awk '{print $1, $2, NR"U"}'
+// :!sort | awk '{print $1, $2, NR"U"}; END { print "\#define WM_EVENT_MAX "NR"U" }'
 #define WM_EVENT_MIN 1U
-#define WM_EVENT_ENTERNOTIFY 1U
-#define WM_EVENT_EXPOSE 2U
-#define WM_EVENT_KEYDOWN 3U
-#define WM_EVENT_KEYUP 4U
-#define WM_EVENT_MAPNOTIFY 5U
-#define WM_EVENT_MAPREQUEST 6U
-#define WM_EVENT_MOUSE 7U
-#define WM_EVENT_UNMAPNOTIFY 8U
-#define WM_EVENT_MAX 9U
+#define WM_EVENT_EXPOSE 1U
+#define WM_EVENT_KEY_DOWN 2U
+#define WM_EVENT_KEY_UP 3U
+#define WM_EVENT_MOUSE_MOTION 4U
+#define WM_EVENT_WINDOW_ENTER 5U
+#define WM_EVENT_WINDOW_LEAVE 6U
+#define WM_EVENT_WINDOW_MAP 7U
+#define WM_EVENT_WINDOW_MAP_REQUEST 8U
+#define WM_EVENT_WINDOW_PROPERTY_CHANGE 9U
+#define WM_EVENT_WINDOW_PROPERTY_DELETE 10U
+#define WM_EVENT_WINDOW_UNMAP 11U
+#define WM_EVENT_MAX 11U
 
 /* Client flags */
 #define CLIENT_VISIBLE 1U
@@ -104,8 +132,10 @@ void wm_event_destroynotify(wm_t *wm, XEvent *ev);
 void wm_event_expose(wm_t *wm, XEvent *ev);
 void wm_event_unknown(wm_t *wm, XEvent *ev);
 
-void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback);
+void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler_func callback,
+                     gpointer data);
 void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent *ev);
+void wm_listener_call_each(gpointer data, gpointer g_wmevent);
 
 void wm_get_mouse_position(wm_t *wm, int *x, int *y, Window window);
 Bool wm_grab_button(wm_t *wm, Window window, unsigned int mask, unsigned int button);

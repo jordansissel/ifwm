@@ -36,8 +36,19 @@
 #include <string.h>
 #include <glib.h>
 
+#define DISPLAY_TO_WM_XID (0)
 static int wm_x_event_error(Display *dpy, XErrorEvent *ev);
 
+static int global_init = 0;
+static wm_t *global_wm;
+
+static int tracecount = 0;
+static int xtracer() {
+  tracecount++;
+  fprintf(stderr, "LIB CALL: %d\n", tracecount);
+  return 0;
+}
+ 
 static void *xmalloc(size_t size) {
   void *ptr;
   ptr = malloc(size);
@@ -55,14 +66,24 @@ wm_t *wm_new(void) {
 
 wm_t *wm_new2(char *display_name) {
   wm_t *wm = NULL;
+
   int i;
   wm = xmalloc(sizeof(wm_t));
   wm_x_open(wm, display_name);
   wm_x_init_screens(wm);
+  //_Xdebug = 1;
+  //XSynchronize(wm->dpy, True);
+  wm->xdo = xdo_new_with_opened_display(wm_x_get_display(wm), NULL, True);
 
-  wm->listeners = malloc(WM_EVENT_MAX * sizeof(wm_event_handler));
+  if (global_init == 0) {
+    global_init = 1;
+    global_wm = wm;
+  }
+
+  /* Initialize the listeners lists */
+  wm->listeners = malloc(WM_EVENT_MAX * sizeof(GPtrArray *));
   for (i = WM_EVENT_MIN; i < WM_EVENT_MAX; i++)
-    wm->listeners[i] = NULL;
+    wm->listeners[i] = g_ptr_array_new();
 
   return wm;
 } /* wm_t *wm_create(char *display_name) */
@@ -90,7 +111,7 @@ void wm_x_init_screens(wm_t *wm) {
 
 void wm_x_init_handlers(wm_t *wm) {
   int i;
-  wm->x_event_handlers = xmalloc(LASTEvent * sizeof(x_event_handler));
+  wm->x_event_handlers = xmalloc(LASTEvent * sizeof(x_event_handler_func));
 
   /* Default event handler is 'unknown' */
   /* LASTEvent from X11/X.h is the max event value */
@@ -113,13 +134,13 @@ void wm_x_init_handlers(wm_t *wm) {
   wm->x_event_handlers[DestroyNotify] = wm_event_destroynotify;
   wm->x_event_handlers[Expose] = wm_event_expose;
 
-  /* TODO(sissel): Maintain a mapping of Display* to wm_t* so we can know which wm_t an error
-   * belongs to */
-  XSetErrorHandler(wm_x_event_error);
+  global_wm = wm;
+  //XSetErrorHandler(wm_x_event_error);
 } /* void wm_x_init_handlers */
 
 int wm_x_event_error(Display *dpy, XErrorEvent *ev) {
-  printf("Got an error\n");
+  wm_log(global_wm, LOG_ERROR, "x11 error for request %lu. resource %lu\n",
+         ev->serial, ev->resourceid);
 } /* int wm_x_event_error */
 
 void wm_x_init_windows(wm_t *wm) {
@@ -129,6 +150,7 @@ void wm_x_init_windows(wm_t *wm) {
   int nscreens;
   int i;
 
+  XGrabServer(wm->dpy);
   nscreens = ScreenCount(wm->dpy);
   for (screen = 0; screen < nscreens; screen++) {
     wm_log(wm, LOG_INFO, "Querying window tree for screen %d", screen);
@@ -137,6 +159,7 @@ void wm_x_init_windows(wm_t *wm) {
       wm_fake_maprequest(wm, wins[i]);
     }
   }
+  XUngrabServer(wm->dpy);
 } /* void wm_x_init_windows */
 
 void wm_set_log_level(wm_t *wm, int log_level) {
@@ -164,8 +187,9 @@ void wm_log(wm_t *wm, int log_level, char *format, ...) {
   fprintf(stderr, "%s\n", msg);
   free(msg);
 
-  if (log_level == LOG_FATAL)
+  if (log_level == LOG_FATAL) {
     exit(1);
+  }
 } /* void wm_log */
 
 void wm_x_open(wm_t *wm, char *display_name) {
@@ -194,7 +218,7 @@ void wm_event_keypress(wm_t *wm, XEvent *ev) {
   client_t *client;
   wm_log(wm, LOG_INFO, "%s", __func__);
   client = wm_get_client(wm, kev.window, True);
-  wm_listener_call(wm, WM_EVENT_KEYDOWN, client, ev);
+  wm_listener_call(wm, WM_EVENT_KEY_DOWN, client, ev);
 }
 
 void wm_event_keyrelease(wm_t *wm, XEvent *ev) {
@@ -202,7 +226,7 @@ void wm_event_keyrelease(wm_t *wm, XEvent *ev) {
   client_t *client;
   wm_log(wm, LOG_INFO, "%s", __func__);
   client = wm_get_client(wm, kev.window, True);
-  wm_listener_call(wm, WM_EVENT_KEYUP, client, ev);
+  wm_listener_call(wm, WM_EVENT_KEY_UP, client, ev);
 }
 
 void wm_get_mouse_position(wm_t *wm, int *x, int *y, Window window) {
@@ -288,7 +312,6 @@ void wm_event_configurenotify(wm_t *wm, XEvent *ev) {
     changes.border_width = 0;
     valuemask |= CWBorderWidth;
   }
-
 }
 
 void wm_event_maprequest(wm_t *wm, XEvent *ev) {
@@ -301,10 +324,10 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
   XGrabServer(wm->dpy);
 
   client = wm_get_client(wm, mrev.window, True);
-  client->flags |= CLIENT_VISIBLE;
-
   if (client == NULL)
     return;
+
+  client->flags |= CLIENT_VISIBLE;
 
   if (client->attr.override_redirect) {
     wm_log(wm, LOG_INFO, "%s: skipping window %d, override_redirect is set",
@@ -314,10 +337,8 @@ void wm_event_maprequest(wm_t *wm, XEvent *ev) {
     return;
   }
 
-  XSelectInput(wm->dpy, mrev.window, 
-               EnterWindowMask | LeaveWindowMask 
-               | ButtonPressMask | ButtonReleaseMask);
-  wm_listener_call(wm, WM_EVENT_MAPREQUEST, client, ev);
+  XSelectInput(wm->dpy, mrev.window, ClientWindowMask);
+  wm_listener_call(wm, WM_EVENT_WINDOW_MAP_REQUEST, client, ev);
   XUngrabServer(wm->dpy);
 }
 
@@ -326,13 +347,23 @@ void wm_event_mapnotify(wm_t *wm, XEvent *ev) {
   client_t *client;
   wm_log(wm, LOG_INFO, "%s: mapnotify %d", __func__, mev.window);
   client = wm_get_client(wm, mev.window, True);
+
+  if (client == NULL) {
+    wm_log(wm, LOG_ERROR, 
+           "%s: got mapnotify for a client (window: %ld) that is null, input only?",
+           __func__, mev.window);
+    return;
+  }
+
   client->flags |= CLIENT_VISIBLE;
-  wm_listener_call(wm, WM_EVENT_MAPNOTIFY, client, ev);
+  wm_listener_call(wm, WM_EVENT_WINDOW_MAP, client, ev);
 }
 
 void wm_event_clientmessage(wm_t *wm, XEvent *ev) {
   XClientMessageEvent cmev = ev->xclient;
-  wm_log(wm, LOG_INFO, "%s", __func__);
+  wm_log(wm, LOG_INFO, "%s: Window %ld, atom %ld(%s), format %ld",
+         __func__, cmev.window, cmev.message_type,
+         XGetAtomName(wm->dpy, cmev.message_type), cmev.format);
 }
 
 void wm_event_enternotify(wm_t *wm, XEvent *ev) {
@@ -341,7 +372,7 @@ void wm_event_enternotify(wm_t *wm, XEvent *ev) {
   wm_log(wm, LOG_INFO, "%s: window %ld", __func__, ewev.window);
 
   client = wm_get_client(wm, ewev.window, False);
-  wm_listener_call(wm, WM_EVENT_ENTERNOTIFY, client, ev);
+  wm_listener_call(wm, WM_EVENT_WINDOW_ENTER, client, ev);
 }
 
 void wm_event_leavenotify(wm_t *wm, XEvent *ev) {
@@ -351,8 +382,28 @@ void wm_event_leavenotify(wm_t *wm, XEvent *ev) {
 
 void wm_event_propertynotify(wm_t *wm, XEvent *ev) {
   XPropertyEvent pev = ev->xproperty;
-  wm_log(wm, LOG_INFO, "%s: window %d changed property atom %d (%s)", __func__, pev.window, pev.atom, (pev.state == PropertyDelete ? "deleted" : "changed"));
+  client_t *client;
+  wm_log(wm, LOG_INFO, "%s: window %d changed property atom %d (%s)", __func__,
+         pev.window, pev.atom, 
+         (pev.state == PropertyDelete ? "deleted" : "changed"));
+  client = wm_get_client(wm, pev.window, False);
 
+  /* XInternAtom has an internal cache local to the client, so we don't
+   * need to worry about caching these ourselves. */
+  if ((pev.atom == XInternAtom(wm->dpy, "WM_NAME", False))
+      || (pev.atom == XInternAtom(wm->dpy, "_NET_WM_NAME", False))
+      || (pev.atom == XInternAtom(wm->dpy, "_NET_WM_VISIBLE_NAME", False))) {
+    wm_log(wm, LOG_INFO, "%s: WINDOW NAME CHANGED", __func__);
+  }
+
+  switch (pev.state) {
+    case PropertyNewValue:
+      wm_listener_call(wm, WM_EVENT_WINDOW_PROPERTY_CHANGE, client, ev);
+      break;
+    case PropertyDelete:
+      wm_listener_call(wm, WM_EVENT_WINDOW_PROPERTY_DELETE, client, ev);
+      break;
+  }
 }
 
 void wm_event_unmapnotify(wm_t *wm, XEvent *ev) {
@@ -366,14 +417,15 @@ void wm_event_unmapnotify(wm_t *wm, XEvent *ev) {
   client = wm_get_client(wm, uev.window, False);
 
   client->flags &= ~(CLIENT_VISIBLE);
-  wm_listener_call(wm, WM_EVENT_UNMAPNOTIFY, client, ev);
+  wm_listener_call(wm, WM_EVENT_WINDOW_UNMAP, client, ev);
   wm_remove_client(wm, client);
 }
 
 void wm_event_destroynotify(wm_t *wm, XEvent *ev) {
   XDestroyWindowEvent dev = ev->xdestroywindow;
   Window parent = dev.event;
-  wm_log(wm, LOG_INFO, "%s: Window %d/%d was destroyed.", __func__, dev.event, dev.window);
+  wm_log(wm, LOG_INFO, "%s: Window %ld (parent %ld) was destroyed.",
+         __func__, dev.window, parent);
 
   //XDestroyWindow(wm->dpy, parent);
 }
@@ -391,9 +443,8 @@ void wm_event_unknown(wm_t *wm, XEvent *ev) {
   //wm_log(wm, LOG_INFO, "%s: Unknown event type '%d'", __func__, ev->type);
 }
 
-void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback) {
-  wm_event_handler callback_copy;
-
+void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler_func callback,
+                     gpointer data) {
   wm_log(wm, LOG_INFO, "Adding listener for event %d: %016tx", 
          event, callback);
 
@@ -403,12 +454,15 @@ void wm_listener_add(wm_t *wm, wm_event_id event, wm_event_handler callback) {
            event, WM_EVENT_MAX);
   }
 
-  wm->listeners[event] = callback;
+  wm_event_handler_t *handler = xmalloc(sizeof(wm_event_handler_t));
+  handler->callback = callback;
+  handler->data = data;
+  g_ptr_array_add(wm->listeners[event], handler);
 }
 
 void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent *ev) {
   wm_event_t event;
-  wm_event_handler callback;
+  wm_event_handler_t callback;
 
   //wm_log(wm, LOG_ERROR, "could not find client for window '%d'", mrev.window);
 
@@ -422,10 +476,20 @@ void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent 
   event.event_id = event_id;
   event.xevent = ev;
   event.client = client;
+  event.wm = wm;
 
-  callback = wm->listeners[event_id];
-  if (callback == NULL) {
+  if (event_id >= WM_EVENT_MAX) {
+    wm_log(wm, LOG_FATAL, 
+           "Attempt to call listener for event '%d' when max event is '%d'",
+           event, WM_EVENT_MAX);
+  }
+
+  GPtrArray *listeners;
+  listeners = wm->listeners[event_id];
+  if (listeners->len == 0) {
     wm_log(wm, LOG_INFO, "No callback registered for event %d", event_id);
+
+    /* TODO(sissel): Why do we do this? */
     switch (event_id) {
       case ButtonPress:
       case ButtonRelease:
@@ -436,8 +500,15 @@ void wm_listener_call(wm_t *wm, unsigned int event_id, client_t *client, XEvent 
     }
     return;
   }
-  wm_log(wm, LOG_INFO, "Calling func %016tx", callback);
-  callback(wm, &event);
+
+  g_ptr_array_foreach(listeners, wm_listener_call_each, &event);
+} /* void wm_listener_call */
+
+void wm_listener_call_each(gpointer data, gpointer g_wmevent) {
+  wm_event_t *event = g_wmevent;
+  wm_event_handler_t *handler = data;
+  wm_log(event->wm, LOG_INFO, "Calling func %016tx", handler->callback);
+  handler->callback(event->wm, event, handler->data);
 }
 
 /* Fake map requests are mainly to capture windows we don't know about that exist
@@ -447,7 +518,7 @@ void wm_fake_maprequest(wm_t *wm, Window w) {
   XWindowAttributes attr;
 
   XGetWindowAttributes(wm->dpy, w, &attr);
-  if (attr.map_state == IsViewable) {
+  if (attr.map_state == IsViewable /* && attr.class != InputOnly */) {
     e.xmap.window = w;
     wm_log(wm, LOG_INFO, "fake map for: %d", w);
     wm_event_maprequest(wm, &e);
@@ -531,8 +602,9 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
     wm_log(wm, LOG_INFO, "New client window: %d", window);
     ret = XGetWindowAttributes(wm->dpy, window, &attr);
     if (attr.class == InputOnly) {
-      wm_log(wm, LOG_INFO, "%s: Window class is InputOnly, ignoring", __func__);
-      return NULL;
+      wm_log(wm, LOG_INFO, 
+             "%s: Window class is InputOnly, should we ignore this?", __func__);
+      //return NULL;
     }
 
     //wm_log(wm, LOG_INFO, "window: %d = %dx%d@%d,%d", 
@@ -545,7 +617,7 @@ client_t *wm_get_client(wm_t *wm, Window window, Bool create_if_necessary) {
     c->flags = 0;
     memcpy(&(c->attr), &attr, sizeof(XWindowAttributes));
     ret = XSaveContext(wm->dpy, window, wm->context, (XPointer)c);
-    wm_log(wm, LOG_INFO, "%s: XSaveContext(%ld) returned %d.", __func__, window, ret);
+    //wm_log(wm, LOG_INFO, "%s: XSaveContext(%ld) returned %d.", __func__, window, ret);
     if (ret != 0) {
       wm_log(wm, LOG_ERROR, "%s: XSaveContext failed.", __func__);
     }
